@@ -2,7 +2,7 @@
 # and are edited from the web UI (Settings tab); changes here are ignored after that.
 
 [trends]
-geo = ""                  # "" = worldwide (needed for a per-country breakdown); "US", "CA", ... to scope
+geos = [""]               # markets to track: "" = worldwide, or 2-letter codes like "CA", "US" (max 5)
 timeframe = "today 12-m"  # weekly datapoints over the last year
 hl = "en-US"
 # Time zone comes from the container (TZ in .env); the weekly schedule uses it.
@@ -29,6 +29,7 @@ rising_per_seed = 10      # rising related queries kept per seed
 top_per_seed = 3          # top related queries kept per seed (stable, high-volume neighbours)
 max_candidates = 60       # total pool size (pins + seeds + discovered); each 4 terms = 1 API call
 blocklist = []            # substrings; discovered terms containing any of these are dropped
+part_ideas = true         # collect Google autocomplete phrases per seed ("Part ideas" tab)
 
 [ranking]
 top_n = 20
@@ -37,6 +38,7 @@ momentum_weight = 0.5
 recent_weeks = 4          # momentum = recent window vs. the baseline window before it
 baseline_weeks = 12
 momentum_floor = 0.05     # added to both windows (in anchor units) so tiny terms don't swing wildly
+group_similar = true      # fold variants like "1.9 alh tdi" under "alh"
 
 [regions]
 hide_small_countries = true  # hide countries/territories under ~1M people, which top lists on a handful of searches

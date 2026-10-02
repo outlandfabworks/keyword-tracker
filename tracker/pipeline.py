@@ -11,7 +11,8 @@ from pytrends.exceptions import TooManyRequestsError
 
 from . import db
 from .config import Config
-from .ranking import Scored, momentum, score_all, select_top
+from .ranking import Scored, momentum, rank_groups, score_all
+from .suggest import SuggestClient, SuggestRateLimited, prefixes
 from .trends import MAX_TERMS_PER_REQUEST, Related, TrendsClient
 
 log = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class Cancelled(Exception):
     """Raised by a progress callback to stop a run between requests."""
 
 
-# progress(phase, done, total, detail). Phases: discover, interest, regions.
+# progress(phase, done, total, detail). Phases: discover, interest, regions, ideas.
 # Always called outside the per-request try blocks, so a Cancelled it raises propagates.
 Progress = Callable[[str, int, int, str], None]
 
@@ -195,6 +196,8 @@ def _fetch_interest(
 
     items = list(results.values())
     items += [Scored(term=t, volume=None, momentum=None) for t in pool if t not in results]
+    for s in items:
+        s.source = pool.get(s.term, "anchor")
     with conn:
         conn.executemany(
             "INSERT OR REPLACE INTO candidates (run_id, term, source, volume, momentum, error) VALUES (?, ?, ?, ?, ?, ?)",
@@ -237,13 +240,45 @@ def _save_ranking(conn: sqlite3.Connection, run_id: int, items: list[Scored], to
         )
 
 
-def run(conn: sqlite3.Connection, cfg: Config, client: TrendsClient, progress: Progress = _no_progress) -> int:
+def _collect_ideas(
+    conn: sqlite3.Connection, suggester: SuggestClient, run_id: int, seeds: list[str], progress: Progress
+) -> list[str]:
+    """Autocomplete every seed + ' a'..' z'. Failures here never affect the rankings."""
+    jobs = [(seed, p) for seed in seeds for p in prefixes(seed)]
+    errors = []
+    for i, (seed, prefix) in enumerate(jobs):
+        progress("ideas", i, len(jobs), prefix.strip())
+        try:
+            found = suggester.complete(prefix)
+        except SuggestRateLimited:
+            errors.append(f"autocomplete rate limited at {prefix!r}; part ideas incomplete")
+            break
+        except Exception as e:
+            log.warning("autocomplete(%r) failed: %s", prefix, e)
+            errors.append(f"autocomplete({prefix!r}): {e}")
+            continue
+        with conn:
+            conn.executemany(
+                "INSERT OR IGNORE INTO suggestions VALUES (?, ?, ?, ?, ?)",
+                [(run_id, seed, prefix.strip(), t, pos) for pos, t in enumerate(found)],
+            )
+    return errors
+
+
+def run(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    client: TrendsClient,
+    progress: Progress = _no_progress,
+    suggester: SuggestClient | None = None,
+) -> int:
+    """One refresh for one market (cfg.trends.geo)."""
     run_id = db.start_run(conn, cfg.trends.anchor, cfg.trends.geo, cfg.trends.timeframe)
     errors: list[str] = []
     status = "ok"
+    d = cfg.discovery
     try:
         pins = db.pinned_terms(conn)
-        d = cfg.discovery
         related, errs = _discover(conn, client, run_id, d.seeds, progress)
         errors += errs
 
@@ -255,12 +290,14 @@ def run(conn: sqlite3.Connection, cfg: Config, client: TrendsClient, progress: P
 
         # Rank whatever we got, even if Google cut us off partway.
         score_all(items, cfg.ranking.volume_weight, cfg.ranking.momentum_weight)
-        top = select_top(items, pins, cfg.ranking.top_n)
+        top = rank_groups(items, pins, cfg.ranking.top_n, group=cfg.ranking.group_similar)
         _save_ranking(conn, run_id, items, top)
+        if not rate_limited:
+            errors += _fetch_regions(conn, client, run_id, [s for s in top if s.score is not None], progress)
+        if d.part_ideas and suggester is not None:
+            errors += _collect_ideas(conn, suggester, run_id, d.seeds, progress)
         if rate_limited:
             raise RateLimited("interest_over_time")
-
-        errors += _fetch_regions(conn, client, run_id, [s for s in top if s.score is not None], progress)
         if errors:
             status = "partial"
     except RateLimited as e:
@@ -274,6 +311,39 @@ def run(conn: sqlite3.Connection, cfg: Config, client: TrendsClient, progress: P
         errors.append(repr(e))
         raise
     finally:
-        db.finish_run(conn, run_id, status, client.requests_made, "\n".join(errors) or None)
-        log.info("run %d finished: %s (%d requests)", run_id, status, client.requests_made)
+        total = client.requests_made + (suggester.requests_made if suggester else 0)
+        db.finish_run(conn, run_id, status, total, "\n".join(errors) or None)
+        log.info("run %d (%s) finished: %s (%d requests)", run_id, cfg.trends.geo or "worldwide", status, total)
     return run_id
+
+
+# make_clients(market_cfg) -> (TrendsClient, SuggestClient | None)
+ClientFactory = Callable[[Config], "tuple[TrendsClient, SuggestClient | None]"]
+# market_progress(market_index, market_count, geo, phase, done, total, detail)
+MarketProgress = Callable[[int, int, str, str, int, int, str], None]
+
+
+def default_clients(cfg: Config) -> tuple[TrendsClient, SuggestClient | None]:
+    t = cfg.trends
+    suggester = SuggestClient(t.hl, t.geo, cfg.rate_limit) if cfg.discovery.part_ideas else None
+    return TrendsClient(t, cfg.regions, cfg.rate_limit), suggester
+
+
+def run_markets(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    make_clients: ClientFactory = default_clients,
+    progress: MarketProgress | None = None,
+) -> list[int]:
+    """A full refresh: one run per tracked market, in order. Stops early if a run is cancelled."""
+    ids = []
+    geos = cfg.trends.geos
+    for i, geo in enumerate(geos):
+        mcfg = cfg.for_market(geo)
+        client, suggester = make_clients(mcfg)
+        cb = (lambda ph, d, tot, det, i=i, geo=geo: progress(i, len(geos), geo, ph, d, tot, det)) if progress else _no_progress
+        run_id = run(conn, mcfg, client, cb, suggester)
+        ids.append(run_id)
+        if conn.execute("SELECT status FROM runs WHERE id = ?", (run_id,)).fetchone()["status"] == "cancelled":
+            break
+    return ids

@@ -1,4 +1,5 @@
 import math
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -295,6 +296,40 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(db.last_attempted_run(conn)["status"], "failed")
 
 
+class DesktopTests(unittest.TestCase):
+    def test_second_launch_just_opens_browser(self):
+        from unittest import mock
+        from tracker import desktop
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with mock.patch.object(desktop, "is_running", return_value=True), \
+             mock.patch.object(desktop.webbrowser, "open") as opened, \
+             mock.patch("tracker.web.serve") as serve:
+            self.assertEqual(desktop.main(["--data-dir", tmp.name]), 0)
+        opened.assert_called_once_with("http://127.0.0.1:8090")
+        serve.assert_not_called()
+
+    def test_first_launch_serves_locally(self):
+        from unittest import mock
+        from tracker import desktop
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with mock.patch.object(desktop, "is_running", return_value=False), \
+             mock.patch.object(desktop, "wait_until_running", return_value=False), \
+             mock.patch("tracker.web.serve") as serve:
+            desktop.main(["--data-dir", tmp.name, "--no-browser", "--no-schedule"])
+        args, kwargs = serve.call_args
+        self.assertEqual(args[0], Path(tmp.name) / "keywords.db")
+        self.assertEqual(args[2], "127.0.0.1")                                      # this computer only
+        self.assertFalse(kwargs["schedule"])
+        self.assertTrue((Path(tmp.name) / "port").exists())
+        os.environ.pop("KWT_DESKTOP", None)
+        import logging
+        for h in logging.root.handlers[:]:  # release the log file (Windows can't delete open files)
+            h.close()
+            logging.root.removeHandler(h)
+
+
 class ApiTests(unittest.TestCase):
     def setUp(self):
         from tracker.web import create_app
@@ -383,3 +418,147 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(c.get("/healthz").status_code, 200)
         auth = {"Authorization": "Basic " + base64.b64encode(b"any:s3cret").decode()}
         self.assertEqual(c.get("/api/status", headers=auth).status_code, 200)
+
+
+class GroupingTests(unittest.TestCase):
+    def rows(self, items, pins=(), top_n=10, blocklist=(), group=True):
+        from tracker.ranking import rank_groups
+        return {g.term: [s.term for s in g.similar] for g in rank_groups(items, set(pins), top_n, list(blocklist), group)}
+
+    def mk(self, term, score, source="rising"):
+        return Scored(term, 1.0, 0.0, score=score, source=source)
+
+    def test_variants_fold_parts_stay(self):
+        items = [self.mk("alh", .7, "seed"), self.mk("1.9 alh", .8), self.mk("1.9 alh tdi", .9), self.mk("tdi", .6, "seed"),
+                 self.mk("alh turbo", .5), self.mk("alh turbo flange", .45), self.mk("alh engine", .3)]
+        rows = self.rows(items)
+        self.assertEqual(sorted(rows["1.9 alh tdi"]), ["1.9 alh", "alh", "alh engine"])  # numbers/qualifiers/standalone words fold
+        self.assertIn("alh turbo", rows)                                              # a part keeps its row
+        self.assertIn("alh turbo flange", rows)
+        self.assertIn("tdi", rows)
+
+    def test_drivetrain_and_engine_words_fold(self):
+        items = [self.mk("rock crawler", .5, "seed"), self.mk("4x4 rock crawler", .4), self.mk("rock crawler 4wd", .3),
+                 self.mk("discovery 2", .6, "seed"), self.mk("discovery 2 v8", .2), self.mk("discovery 2 diesel", .1)]
+        rows = self.rows(items)
+        self.assertEqual(sorted(rows["rock crawler"]), ["4x4 rock crawler", "rock crawler 4wd"])
+        self.assertEqual(sorted(rows["discovery 2"]), ["discovery 2 diesel", "discovery 2 v8"])
+
+    def test_plurals_and_pins(self):
+        items = [self.mk("roof top tent", .5), self.mk("roof top tents", .4), self.mk("alh", .3, "seed"), self.mk("2003 alh", .9)]
+        self.assertEqual(self.rows(items)["roof top tent"], ["roof top tents"])
+        rows = self.rows(items, pins={"2003 alh"})
+        self.assertIn("2003 alh", rows)                                               # pinned: never folded away
+        self.assertIn("alh", rows)
+
+    def test_grouping_off_and_blocklist(self):
+        items = [self.mk("alh", .7, "seed"), self.mk("1.9 alh", .8), self.mk("rc crawler", .9)]
+        self.assertEqual(set(self.rows(items, group=False)), {"alh", "1.9 alh", "rc crawler"})
+        self.assertNotIn("rc crawler", self.rows(items, blocklist=["rc"]))
+
+
+class IdeasTests(unittest.TestCase):
+    def test_group_by_part(self):
+        from tracker.ideas import Phrase, group_ideas
+        terms = ["alh injectors", "alh injector nozzles", "alh tdi injector seals", "alh injection pump", "alh injection pump seal kit",
+                 "alh turbo", "alh tdi turbo upgrade", "alh timing belt kit", "alh dental clinic", "alh", "al karam sweets"]
+        phrases = [Phrase(t, i % 10, 1) for i, t in enumerate(terms)]
+        groups, singles, hidden = group_ideas(phrases, "alh", ["tdi"], ["dental"])
+        by = {g.key: sorted(p.term for p in g.phrases) for g in groups}
+        self.assertEqual(by["injector"], ["alh injector nozzles", "alh injectors", "alh tdi injector seals"])
+        self.assertEqual(by["injection"], ["alh injection pump", "alh injection pump seal kit"])
+        self.assertEqual(by["turbo"], ["alh tdi turbo upgrade", "alh turbo"])
+        self.assertEqual([p.term for p in singles], ["alh timing belt kit"])
+        self.assertEqual(hidden, 1)                                                   # the dental clinic
+
+    def test_short_words_join_the_next(self):
+        from tracker.ideas import Phrase, group_ideas
+        terms = ["off road go kart", "off road go karts for sale", "off road x pipe", "off road x pipe foxbody"]
+        groups, _, _ = group_ideas([Phrase(t, 0, 1) for t in terms], "off road", [], [])
+        self.assertEqual(sorted(g.key for g in groups), ["go kart", "x pipe"])
+
+
+class FakeSuggester:
+    def __init__(self):
+        self.requests_made = 0
+
+    def complete(self, q):
+        self.requests_made += 1
+        q = q.strip()
+        return [f"{q}njectors", f"{q}njector seals"] if q.endswith(" i") else []
+
+
+class MarketTests(unittest.TestCase):
+    def test_old_single_geo_config_migrates(self):
+        from tracker.config import config_from_dict
+        self.assertEqual(config_from_dict({"discovery": {"seeds": ["x"]}, "trends": {"geo": "ca"}}).trends.geos, ["CA"])
+        cfg = config_from_dict({"discovery": {"seeds": ["x"]}, "trends": {"geos": ["", "ww", "us", "US"]}})
+        self.assertEqual(cfg.trends.geos, ["", "US"])
+        self.assertNotIn("geo", cfg.to_dict()["trends"])
+        with self.assertRaises(ValueError):
+            config_from_dict({"discovery": {"seeds": ["x"]}, "trends": {"geos": ["US", "CA", "GB", "AU", "NZ", "DE"]}})
+        with self.assertRaises(ValueError):
+            config_from_dict({"discovery": {"seeds": ["x"]}, "trends": {"geos": ["USA"]}})
+
+    def test_one_run_per_market_with_ideas(self):
+        from dataclasses import replace
+        from tracker.pipeline import run_markets
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        conn = db.connect(Path(tmp.name) / "t.db")
+        self.addCleanup(conn.close)
+        base = make_cfg()
+        cfg = replace(base, trends=replace(base.trends, geos=["", "CA"]))
+        seen = []
+        ids = run_markets(conn, cfg, lambda c: (FakeClient(), FakeSuggester()),
+                          lambda i, n, geo, ph, d, t, det: seen.append((i, n, geo, ph)))
+        runs = [db.last_completed_run(conn, g) for g in ("", "CA")]
+        self.assertEqual([r["id"] for r in runs], ids)
+        self.assertEqual({p for *_, p in seen}, {"discover", "interest", "regions", "ideas"})
+        self.assertEqual({(i, g) for i, _, g, _ in seen}, {(0, ""), (1, "CA")})
+        self.assertEqual(sorted(r["term"] for r in db.suggestion_phrases(conn, ids[1], "seed1")),
+                         ["seed1 injector seals", "seed1 injectors"])
+        self.assertGreater(runs[1]["requests_made"], 27)                               # trends + 27 autocomplete
+
+
+class MarketApiTests(unittest.TestCase):
+    def setUp(self):
+        from dataclasses import replace
+        from tracker.pipeline import run_markets
+        from tracker.web import create_app
+        self.tmp = tempfile.TemporaryDirectory()
+        path = Path(self.tmp.name) / "t.db"
+        conn = db.connect(path)
+        base = make_cfg()
+        cfg = replace(base, trends=replace(base.trends, geos=["", "CA"]))
+        db.save_config(conn, cfg)
+        run_markets(conn, cfg, lambda c: (FakeClient(), FakeSuggester()))
+        run_markets(conn, cfg, lambda c: (FakeClient(), FakeSuggester()))  # second refresh: "new" badges
+        conn.close()
+        self.c = create_app(path, Path("/nonexistent"), start_background=False).test_client()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_markets_and_ideas(self):
+        st = self.c.get("/api/status").get_json()
+        self.assertEqual([m["code"] for m in st["markets"]], ["WW", "CA"])
+        self.assertTrue(all(m["last_completed"] for m in st["markets"]))
+        self.assertEqual(self.c.get("/api/ranking?m=CA").get_json()["run"]["market"], "CA")
+        self.assertEqual(self.c.get("/api/ranking").get_json()["run"]["market"], "WW")    # default: first market
+        ideas = self.c.get("/api/ideas?m=CA&seed=seed1").get_json()
+        self.assertEqual(ideas["seed"], "seed1")
+        self.assertTrue(ideas["has_previous"])
+        phrases = [p for g in ideas["groups"] for p in g["phrases"]] + ideas["singles"]
+        self.assertEqual(sorted(p["term"] for p in phrases), ["seed1 injector seals", "seed1 injectors"])
+        self.assertFalse(any(p["new"] for p in phrases))                                   # same as last time
+        est = self.c.get("/api/settings").get_json()["estimate"]
+        self.assertEqual(est["markets"], 2)
+
+    def test_hide_and_undo(self):
+        self.c.post("/api/ignore", json={"word": "Injector "})
+        self.assertIn("injector", self.c.get("/api/settings").get_json()["config"]["discovery"]["blocklist"])
+        ideas = self.c.get("/api/ideas?m=CA&seed=seed1").get_json()
+        self.assertEqual(ideas["hidden"], 2)
+        self.c.post("/api/ignore/undo", json={"word": "injector"})
+        self.assertNotIn("injector", self.c.get("/api/settings").get_json()["config"]["discovery"]["blocklist"])

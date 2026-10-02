@@ -17,6 +17,16 @@ async function api(path, opts = {}) {
   return data;
 }
 
+/** A toast with an Undo button; stays up a little longer. */
+function undoToast(msg, onUndo) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.innerHTML = `${esc(msg)} <button type="button" class="toast-undo">Undo</button>`;
+  $("button", t).addEventListener("click", () => { t.remove(); onUndo(); });
+  $("#toasts").append(t);
+  setTimeout(() => t.remove(), 8000);
+}
+
 function toast(msg, isErr = false) {
   const t = document.createElement("div");
   t.className = "toast" + (isErr ? " err" : "");
@@ -41,16 +51,16 @@ function fmtPct(p) {
 function momHtml(m) {
   if (m == null) return '<span class="delta flat">–</span>';
   const p = momPct(m);
-  if (Math.abs(p) < 0.02) return '<span class="delta flat" title="Roughly flat">0%</span>';
+  if (Math.abs(p) < 0.02) return '<span class="delta flat" data-tip="Roughly flat">0%</span>';
   return p > 0
-    ? `<span class="delta up" title="Up vs. the previous period">▲ ${fmtPct(p)}</span>`
-    : `<span class="delta down" title="Down vs. the previous period">▼ ${fmtPct(p)}</span>`;
+    ? `<span class="delta up" data-tip="Up vs. the previous period">▲ ${fmtPct(p)}</span>`
+    : `<span class="delta down" data-tip="Down vs. the previous period">▼ ${fmtPct(p)}</span>`;
 }
 const score100 = (s) => (s == null ? null : Math.round(s * 100));
 function meterHtml(s) {
   const v = score100(s);
   if (v == null) return '<span class="faint">–</span>';
-  return `<div class="meter" title="Score ${v} / 100"><div class="meter-track"><div class="meter-fill" style="width:${v}%"></div></div><span>${v}</span></div>`;
+  return `<div class="meter" data-tip="Score ${v} / 100"><div class="meter-track"><div class="meter-fill" style="width:${v}%"></div></div><span>${v}</span></div>`;
 }
 function relTime(iso) {
   if (!iso) return "never";
@@ -93,24 +103,54 @@ const statusHtml = (s) => `<span class="status ${esc(s)}"><span class="dot"></sp
 
 function moveHtml(rank, prev, hasPrevRun) {
   if (!hasPrevRun) return '<span class="move same">–</span>';
-  if (prev == null) return '<span class="move new" title="New in the list since the last refresh">NEW</span>';
+  if (prev == null) return '<span class="move new" data-tip="New in the list since the last refresh">NEW</span>';
   const d = prev - rank;
-  if (d > 0) return `<span class="move up" title="Up ${d} since the last refresh">▲${d}</span>`;
-  if (d < 0) return `<span class="move down" title="Down ${-d} since the last refresh">▼${-d}</span>`;
-  return '<span class="move same" title="Same position as last time">•</span>';
+  if (d > 0) return `<span class="move up" data-tip="Up ${d} since the last refresh">▲${d}</span>`;
+  if (d < 0) return `<span class="move down" data-tip="Down ${-d} since the last refresh">▼${-d}</span>`;
+  return '<span class="move same" data-tip="Same position as last time">•</span>';
 }
 
 const PIN_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l5 5-3 1-4 4 1 5-2 2-4-5-5 5-1-1 5-5-5-4 2-2 5 1 4-4z" fill="currentColor"/></svg>`;
 const PIN_OUTLINE_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l5 5-3 1-4 4 1 5-2 2-4-5-5 5-1-1 5-5-5-4 2-2 5 1 4-4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
 function pinBtn(term, pinned) {
   return `<button class="icon-btn pin-toggle ${pinned ? "on" : ""}" data-term="${esc(term)}" data-pinned="${pinned ? 1 : 0}"
-    title="${pinned ? "Unpin (stop forcing into the list)" : "Pin (always keep in the ranked list)"}"
+    data-tip="${pinned ? "Unpin (stop forcing into the list)" : "Pin (always keep in the ranked list)"}"
     aria-label="${pinned ? "Unpin" : "Pin"} ${esc(term)}">${pinned ? PIN_SVG : PIN_OUTLINE_SVG}</button>`;
 }
 
 // ---------------------------------------------------------------------------
-// tooltip
+// tooltips: any element with data-tip shows it on hover, keyboard focus, or tap
 // ---------------------------------------------------------------------------
+const INFO_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="4.9" r="1" fill="currentColor"/></svg>`;
+/** A small ⓘ button that explains something on hover or tap. */
+const info = (text) => `<button type="button" class="info" data-tip="${esc(text)}" aria-label="${esc(text)}">${INFO_SVG}</button>`;
+
+let tipOwner = null;
+function showTipFor(el) {
+  tipOwner = el;
+  const r = el.getBoundingClientRect();
+  tip.show(esc(el.dataset.tip), r.left + r.width / 2 - 14, r.bottom - 6);
+}
+function hideTip() { tipOwner = null; tip.hide(); }
+document.addEventListener("mouseover", (e) => {
+  const el = e.target.closest("[data-tip]");
+  if (el && el !== tipOwner && el.dataset.tip) showTipFor(el);
+});
+document.addEventListener("mouseout", (e) => {
+  const el = e.target.closest("[data-tip]");
+  if (el && el === tipOwner && !el.contains(e.relatedTarget)) hideTip();
+});
+document.addEventListener("focusin", (e) => { const el = e.target.closest("[data-tip]"); if (el && el.dataset.tip) showTipFor(el); });
+document.addEventListener("focusout", (e) => { if (e.target.closest("[data-tip]") === tipOwner) hideTip(); });
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button.info");
+  if (b) {  // tap support, and keep the click from opening the row underneath
+    e.preventDefault(); e.stopPropagation();
+    tipOwner === b ? hideTip() : showTipFor(b);
+  } else if (tipOwner && tipOwner.matches("button.info")) hideTip();
+}, true);
+window.addEventListener("scroll", () => tipOwner && hideTip(), { passive: true });
+
 const tip = {
   show(html, x, y) {
     const el = $("#tooltip");
@@ -216,7 +256,7 @@ function lineChart(el, dates, series, height = 240) {
 function hbars(rows, label) {
   if (!rows.length) return '<p class="muted">Not enough searches for a reliable breakdown.</p>';
   return `<div class="hbars">${rows.map((r) => `
-      <div class="hit" title="${esc(r.name)}: ${r.value}">
+      <div class="hit" data-tip="${esc(r.name)}: ${r.value}">
         <div class="name">${esc(r.name)}</div>
         <div class="bar"><div style="width:${r.value}%"></div></div>
         <div class="val">${r.value}</div>
@@ -228,7 +268,38 @@ function hbars(rows, label) {
 // app state, status polling, progress banner
 // ---------------------------------------------------------------------------
 const state = { status: null, view: "rankings", runId: null, wasRunning: null, settingsDirty: false,
+  market: null, ideaSeed: null, expanded: new Set(),
   explore: { q: "", filter: "all", sort: "score", dir: -1 } };
+
+// --- markets ----------------------------------------------------------------
+const regionNames = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
+const marketName = (code) => (!code || code === "WW" ? "Worldwide" : (regionNames && regionNames.of(code)) || code);
+const COUNTRY_CODES = `AD AE AF AG AI AL AM AO AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BW BY BZ
+  CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE
+  GF GG GH GI GL GM GN GP GQ GR GT GU GW GY HK HN HR HT HU ID IE IL IM IN IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW
+  KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG
+  NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN
+  SO SR SS ST SV SX SY SZ TC TD TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG US UY UZ VA VC VE VG VI VN VU WF WS XK YE YT ZA ZM ZW`
+  .split(/\s+/).filter(Boolean);
+const trackedMarkets = () => (state.status ? state.status.markets.map((m) => m.code) : ["WW"]);
+function setMarket(code) {
+  state.market = code;
+  try { localStorage.setItem("kwt-market", code); } catch { /* storage unavailable */ }
+}
+function ensureMarket() {
+  const tracked = trackedMarkets();
+  if (!tracked.includes(state.market)) {
+    let saved = null;
+    try { saved = localStorage.getItem("kwt-market"); } catch { /* storage unavailable */ }
+    setMarket(tracked.includes(saved) ? saved : tracked[0]);
+  }
+}
+/** Query string for data requests: the selected market, plus a snapshot id when viewing an old one. */
+function qs(extra = {}) {
+  const p = new URLSearchParams({ m: state.market || "WW", ...extra });
+  if (state.runId) p.set("run", state.runId);
+  return "?" + p.toString();
+}
 
 let pollTimer;
 const schedulePoll = (ms) => { clearTimeout(pollTimer); pollTimer = setTimeout(pollStatus, ms); };
@@ -237,6 +308,7 @@ async function pollStatus() {
   let st;
   try { st = await api("/api/status"); } catch (e) { schedulePoll(10000); return; }
   state.status = st;
+  ensureMarket();
   renderTopbar();
   const running = st.run.running;
   if (state.wasRunning && !running) {
@@ -245,7 +317,7 @@ async function pollStatus() {
     else if (last && last.status === "cancelled") toast("Refresh cancelled.");
     else toast(last && last.status === "partial" ? "Refresh finished with some gaps. Rankings updated." : "Refresh finished. Rankings updated.");
     if (!(state.view === "settings" && state.settingsDirty)) render();
-  } else if (state.wasRunning === false && running && state.view === "rankings" && !st.last_completed) {
+  } else if (state.wasRunning === false && running && !st.last_completed) {
     render();
   }
   state.wasRunning = running;
@@ -258,9 +330,19 @@ function renderTopbar() {
   const btn = $("#run-btn");
   btn.disabled = run.running;
   btn.textContent = run.running ? "Refreshing…" : "Refresh now";
-  btn.title = run.running ? "" : `Fetch fresh data from Google Trends (takes about ${fmtDuration(st.estimate.seconds)})`;
+  btn.dataset.tip = run.running ? "" : `Fetch fresh data from Google now for every market you track. Takes about ${fmtDuration(st.estimate.seconds)}.`;
+  $("#quit-btn").hidden = !st.desktop;
 
-  const updated = st.last_completed ? `Updated ${relTime(st.last_completed.started_at)}` : "No data yet";
+  // market picker: only when more than one market is tracked
+  const sel = $("#market");
+  const codes = trackedMarkets();
+  sel.hidden = codes.length < 2;
+  const opts = codes.map((c) => `<option value="${c}" ${c === state.market ? "selected" : ""}>${esc(marketName(c))}</option>`).join("");
+  if (sel.innerHTML !== opts) sel.innerHTML = opts;
+
+  const mine = st.markets.find((m) => m.code === state.market);
+  const lastDone = (mine && mine.last_completed) || null;
+  const updated = lastDone ? `Updated ${relTime(lastDone.started_at)}` : "No data yet";
   let auto, autoTitle = "";
   if (run.running) auto = "Updating now";
   else if (!st.schedule.enabled) { auto = "Automatic updates off"; autoTitle = "Turn them on in Settings"; }
@@ -270,31 +352,35 @@ function renderTopbar() {
     auto = ms < 120000 ? "Automatic update starting shortly" : `Automatically updates in ${fmtUntil(ms)}`;
     autoTitle = `Next automatic update: ${nr.toLocaleString(undefined, { weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}. Then every ${st.schedule.weekday}.`;
   }
-  $("#freshness").innerHTML = `<span>${esc(updated)}</span><span class="auto" title="${esc(autoTitle)}">${CLOCK_SVG}${esc(auto)}</span>`;
+  $("#freshness").innerHTML = `<span>${esc(updated)}</span><span class="auto" data-tip="${esc(autoTitle)}">${CLOCK_SVG}${esc(auto)}</span>`;
 
   const banner = $("#progress");
   banner.hidden = !run.running;
   if (!run.running) return;
+  // progress weighted by how long each phase takes, across every market
   const est = run.estimate || st.estimate;
-  const order = ["discover", "interest", "regions"];
+  const order = ["discover", "interest", "regions", "ideas"].filter((p) => est.phases[p].seconds > 0);
+  const perMarket = order.reduce((a, p) => a + est.phases[p].seconds, 0);
   const idx = order.indexOf(run.phase);
-  let done = 0, total = est.discover + est.interest + est.regions;
+  let done = run.market_index * perMarket;
   if (idx >= 0) {
-    done = order.slice(0, idx).reduce((a, p) => a + est[p], 0);
-    const phaseTotal = run.total || est[run.phase];
-    done += (run.done / Math.max(phaseTotal, 1)) * est[run.phase];
+    done += order.slice(0, idx).reduce((a, p) => a + est.phases[p].seconds, 0);
+    done += (run.done / Math.max(run.total || 1, 1)) * est.phases[run.phase].seconds;
   }
+  const total = perMarket * Math.max(run.market_count, 1);
   const pct = Math.min(99, Math.round((done / total) * 100));
   $("#progress-fill").style.width = pct + "%";
   $(".progress-bar").setAttribute("aria-valuenow", pct);
+  const where = run.market_count > 1 ? `${marketName(market_code_js(run.market))} (${run.market_index + 1} of ${run.market_count}) · ` : "";
   $("#progress-title").textContent = run.cancelling ? "Cancelling after the current request…"
-    : idx >= 0 ? `Step ${idx + 1} of 3 · ${run.phase_label}` : "Starting refresh…";
+    : idx >= 0 ? `${where}Step ${idx + 1} of ${order.length} · ${run.phase_label}` : "Starting refresh…";
   $("#progress-detail").textContent = run.detail ? `${run.done + 1} of ${run.total}: ${run.detail}` : "";
-  const perReq = est.seconds / est.requests;
-  const left = (total - done) * perReq;
+  const left = Math.max(total - done, 0);
   $("#progress-eta").textContent = `${pct}% · about ${fmtDuration(left)} left · started ${relTime(run.started_at)}. It's slow on purpose so Google doesn't block it. It runs on the server, so you can close this tab.`;
   $("#cancel-btn").disabled = !!run.cancelling;
 }
+
+const market_code_js = (geo) => geo || "WW";
 
 async function startRun() {
   try {
@@ -306,6 +392,17 @@ async function startRun() {
 }
 
 $("#run-btn").addEventListener("click", startRun);
+$("#quit-btn").addEventListener("click", async () => {
+  const running = state.status && state.status.run.running;
+  const msg = running
+    ? "A refresh is running and will stop. Quit Keyword Tracker anyway?"
+    : "Quit Keyword Tracker? Weekly updates only happen while it's running. Open the app again any time.";
+  if (!confirm(msg)) return;
+  try { await api("/api/quit", { method: "POST" }); } catch (e) { toast(e.message, true); return; }
+  clearTimeout(pollTimer);
+  document.body.innerHTML = `<div class="container"><div class="card empty"><h2>Keyword Tracker has stopped</h2>
+    <p class="muted">You can close this tab. Open the app again whenever you want to use it.</p></div></div>`;
+});
 $("#cancel-btn").addEventListener("click", async () => {
   await api("/api/runs/cancel", { method: "POST" });
   toast("Cancelling after the current request finishes.");
@@ -341,7 +438,7 @@ document.addEventListener("click", (ev) => {
 function parseHash() {
   const [view, qs] = location.hash.replace(/^#/, "").split("?");
   const params = new URLSearchParams(qs || "");
-  return { view: view || "rankings", run: params.get("run") ? +params.get("run") : null };
+  return { view: view || "rankings", run: params.get("run") ? +params.get("run") : null, market: params.get("m") };
 }
 
 let lastHash = location.hash;
@@ -356,18 +453,25 @@ window.addEventListener("hashchange", () => {
 });
 
 function render() {
-  const { view, run } = parseHash();
+  const { view, run, market } = parseHash();
   state.view = view;
   state.runId = run;
+  if (market) setMarket(market.toUpperCase());
   $$(".tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
-  const fn = { rankings: renderRankings, explore: renderExplore, pinned: renderPinned, history: renderHistory, settings: renderSettings }[view] || renderRankings;
+  if (state.status) renderTopbar();
+  const fn = { rankings: renderRankings, ideas: renderIdeas, explore: renderExplore, pinned: renderPinned,
+    history: renderHistory, settings: renderSettings }[view] || renderRankings;
   fn().catch((e) => ($("#view").innerHTML = `<div class="callout err">Couldn't load this page: ${esc(e.message)}</div>`));
 }
-const runQS = () => (state.runId ? `?run=${state.runId}` : "");
+$("#market").addEventListener("change", (e) => {
+  setMarket(e.target.value);
+  location.hash = state.view;  // drops any old-snapshot ?run=
+  render();
+});
 
 function snapshotBanner(run) {
   if (!state.runId || !run) return "";
-  return `<div class="callout warn snapshot-banner row">Viewing an older snapshot from <b>${fmtDateTime(run.started_at)}</b>.
+  return `<div class="callout warn snapshot-banner row">Viewing an older snapshot (${esc(marketName(run.market))}) from <b>${fmtDateTime(run.started_at)}</b>.
     <span class="spacer"></span><a href="#${state.view}">Back to latest</a></div>`;
 }
 
@@ -377,8 +481,9 @@ function emptyState() {
     return `<div class="card empty"><h2>Your first refresh is running</h2>
       <p class="muted">Rankings will appear here automatically when it finishes (progress is shown above).</p></div>`;
   }
-  return `<div class="card empty"><h2>No data yet</h2>
-    <p class="muted">Run a first refresh to discover keywords and rank them. It takes about ${fmtDuration(st?.estimate.seconds)}.<br>
+  const m = trackedMarkets().length > 1 ? ` for ${esc(marketName(state.market))}` : "";
+  return `<div class="card empty"><h2>No data yet${m}</h2>
+    <p class="muted">Run a refresh to discover keywords and rank them. It takes about ${fmtDuration(st?.estimate.seconds)}.<br>
     After that it refreshes itself every week.</p>
     <button class="btn primary" onclick="startRun()">Run first refresh</button></div>`;
 }
@@ -387,48 +492,63 @@ function emptyState() {
 // view: rankings
 // ---------------------------------------------------------------------------
 async function renderRankings() {
-  const data = await api("/api/ranking" + runQS());
+  const data = await api("/api/ranking" + qs());
   const v = $("#view");
   if (!data.run) { v.innerHTML = emptyState(); return; }
   const items = data.items;
   const anchor = data.run.anchor;
   const hasPrev = data.prev_run_id != null;
   const scored = items.filter((i) => i.score != null);
-  const riser = scored.reduce((a, b) => (a == null || b.momentum > a.momentum ? b : a), null);
+  const top = scored.reduce((a, b) => (a == null || b.momentum > a.momentum ? b : a), null);
+  const riser = top && momPct(top.momentum) >= 0.02 ? top : null;  // only if something is actually growing
   const biggest = scored.reduce((a, b) => (a == null || b.volume > a.volume ? b : a), null);
   const newcomers = hasPrev ? items.filter((i) => i.prev_rank == null) : [];
-  const where = data.run.geo ? `in ${data.run.geo}` : "worldwide";
+  const where = marketName(data.run.market);
+  const folded = items.reduce((a, i) => a + i.similar.length, 0);
+  const regionWord = data.run.geo ? "provinces/states" : "countries";
+
+  const similarRows = (r) => r.similar.map((s) => `
+    <tr class="clickable similar-row" tabindex="0" data-term="${esc(s.term)}">
+      <td></td><td></td>
+      <td class="kw-cell"><span class="similar-mark" aria-hidden="true">↳</span><span class="kw">${esc(s.term)}</span></td>
+      <td class="hide-sm"></td>
+      <td class="right num">${fmtVol(s.volume)}</td>
+      <td class="right num">${momHtml(s.momentum)}</td>
+      <td>${meterHtml(s.score)}</td>
+      <td class="hide-sm"></td><td></td>
+    </tr>`).join("");
 
   v.innerHTML = `
     ${snapshotBanner(data.run)}
     <div class="page-head">
-      <div><h1>Top ${items.length} keywords</h1>
-      <p class="muted">Google search interest ${esc(where)}, ranked by popularity and momentum. Click a keyword for details.</p></div>
+      <div><h1>Top ${items.length} keywords · ${esc(where)}</h1>
+      <p class="muted">Google search interest${data.run.geo ? " in " + esc(where) : " worldwide"}, ranked by popularity and momentum. Click a keyword for details.</p></div>
     </div>
     <div class="tiles" style="margin-bottom:16px">
-      <div class="card tile"><div class="label">Fastest riser</div>
-        <div class="value">${riser ? esc(riser.term) : "–"}</div>
-        <div class="sub">${riser ? `${momHtml(riser.momentum)} over the last few weeks` : ""}</div></div>
-      <div class="card tile"><div class="label">Most searched</div>
+      <div class="card tile"><div class="label">Fastest riser ${info("The listed keyword whose interest grew the most: last 4 weeks compared with the 12 weeks before.")}</div>
+        <div class="value">${riser ? esc(riser.term) : "Nothing growing"}</div>
+        <div class="sub">${riser ? `${momHtml(riser.momentum)} over the last few weeks` : "No keyword in the list is up on the previous weeks right now"}</div></div>
+      <div class="card tile"><div class="label">Most searched ${info(`The listed keyword with the highest search interest, measured against “${anchor}”.`)}</div>
         <div class="value">${biggest ? esc(biggest.term) : "–"}</div>
         <div class="sub">${biggest ? `${fmtVol(biggest.volume)} as popular as “${esc(anchor)}”` : ""}</div></div>
-      <div class="card tile"><div class="label">New in the list</div>
+      <div class="card tile"><div class="label">New in the list ${info("Keywords in the list now that weren't in it after the previous refresh.")}</div>
         <div class="value">${hasPrev ? newcomers.length : "–"}</div>
         <div class="sub">${hasPrev ? (newcomers.length ? esc(newcomers.slice(0, 3).map((n) => n.term).join(", ")) + (newcomers.length > 3 ? "…" : "") : "Same keywords as last time") : "First snapshot. Changes show up next week."}</div></div>
-      <div class="card tile"><div class="label">Snapshot</div>
+      <div class="card tile"><div class="label">Snapshot ${info("When this data was fetched from Google. Partial means some requests failed; the rest of the data is still used.")}</div>
         <div class="value">${fmtDate(data.run.started_at)}</div>
         <div class="sub">${statusHtml(data.run.status)}${data.run.status === "partial" ? ' · <a href="#history">some data missing</a>' : ""}</div></div>
     </div>
     <div class="card table-wrap">
       <table>
         <thead><tr>
-          <th>#</th><th title="Change in position since the previous refresh"></th>
+          <th>#</th>
+          <th>${info("Change in position since the previous refresh. NEW means it wasn't in the list last time.")}</th>
           <th>Keyword</th>
-          <th class="hide-sm" title="Search interest over the selected time range">Trend</th>
-          <th class="right" title="Average search interest compared to “${esc(anchor)}” (1× = same popularity)">Popularity ⓘ</th>
-          <th class="right" title="Last 4 weeks compared to the 12 weeks before">Momentum ⓘ</th>
-          <th title="Combined score, 0–100">Score ⓘ</th>
-          <th class="hide-sm">Top ${data.run.geo ? "regions" : "countries"}</th>
+          <th class="hide-sm">Trend ${info("Search interest over the time range in Settings (usually the past 12 months). The dot is the latest week.")}</th>
+          <th class="right">Popularity ${info(`How often it's searched compared with “${anchor}”. 2× = twice as often, 0.5× = half as often. Google doesn't publish real search counts.`)}</th>
+          <th class="right">Momentum ${info("Average interest in the last 4 weeks compared with the 12 weeks before. Green and up = growing.")}</th>
+          <th>Score ${info("0–100. Blends popularity and momentum (balance set in Settings). The list is sorted by this.")}</th>
+          <th class="hide-sm">Top ${regionWord} ${info(`Where this keyword makes up the biggest share of searches. Click the keyword for the full list.`)}</th>
           <th></th>
         </tr></thead>
         <tbody>
@@ -438,18 +558,22 @@ async function renderRankings() {
               <td>${moveHtml(r.rank, r.prev_rank, hasPrev)}</td>
               <td class="kw-cell"><div class="kw">${esc(r.term)}</div>
                 <div class="row" style="gap:4px;margin-top:2px">
-                  ${r.pinned ? `<span class="badge pin">Pinned</span>` : ""}
-                  ${r.source && r.source !== "pin" ? `<span class="badge" title="${esc(SOURCE_HELP[r.source])}">${esc(SOURCE_LABEL[r.source])}</span>` : ""}
+                  ${r.pinned ? `<span class="badge pin" data-tip="You pinned this, so it always appears in the list">Pinned</span>` : ""}
+                  ${r.source && r.source !== "pin" ? `<span class="badge" data-tip="${esc(SOURCE_HELP[r.source])}">${esc(SOURCE_LABEL[r.source])}</span>` : ""}
+                  ${r.similar.length ? `<button type="button" class="badge similar-toggle" data-term="${esc(r.term)}" aria-expanded="${state.expanded.has(r.term)}"
+                    data-tip="Variants of the same search (extra words like years, engine codes or “review”), folded into one row to save space. Click to show them.">
+                    ${state.expanded.has(r.term) ? "▾" : "▸"} ${r.similar.length} similar</button>` : ""}
                 </div></td>
               <td class="hide-sm">${sparkline(r.series)}</td>
               <td class="right num">${fmtVol(r.volume)}</td>
               <td class="right num">${momHtml(r.momentum)}</td>
               <td>${meterHtml(r.score)}</td>
               <td class="hide-sm regions-mini">${r.top_regions.map((x) => esc(x.name)).join(", ") || (r.regions_fetched
-                ? '<span class="faint" title="Not enough searches for a reliable breakdown">too few searches</span>'
-                : '<span class="faint" title="Moved up after you ignored a keyword. Countries are looked up on the next refresh.">next refresh</span>')}</td>
+                ? '<span class="faint" data-tip="Not enough searches for a reliable breakdown">too few searches</span>'
+                : `<span class="faint" data-tip="This keyword joined the list after the last refresh (because of a settings change). Its ${regionWord} are looked up on the next refresh.">next refresh</span>`)}</td>
               <td class="right">${pinBtn(r.term, r.pinned_now)}</td>
-            </tr>`).join("")}
+            </tr>
+            ${state.expanded.has(r.term) ? similarRows(r) : ""}`).join("")}
         </tbody>
       </table>
     </div>
@@ -461,15 +585,24 @@ async function renderRankings() {
         <p><b>Momentum:</b> average interest in the last 4 weeks vs. the 12 weeks before. <b>+50%</b> means interest is growing.</p>
         <p><b>Score:</b> each keyword is ranked against the others on both measures, then the two are blended
         (the balance is in <a href="#settings">Settings</a>). The top ${items.length} make the list, plus anything you've <b>pinned</b>.</p>
+        <p><b>Similar keywords:</b> variants of the same search, like “1.9 alh tdi” and “alh”, share one row so the list
+        shows more different things${folded ? ` (${folded} folded in this list)` : ""}. Part names like “alh turbo” keep their own row.
+        You can turn this off in <a href="#settings">Settings</a>.</p>
         <p><b>Where keywords come from:</b> your seed keywords, plus searches Google reports as rising or popular alongside them.
-        See every keyword checked in <a href="#explore">All keywords</a>.</p>
+        See every keyword checked in <a href="#explore">All keywords</a>, and the specific phrases people type in <a href="#ideas">Part ideas</a>.</p>
       </div>
     </details>`;
 
   $$("tbody tr.clickable", v).forEach((tr) => {
     tr.addEventListener("click", () => openKeyword(tr.dataset.term));
-    tr.addEventListener("keydown", (e) => { if (e.key === "Enter") openKeyword(tr.dataset.term); });
+    tr.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target === tr) openKeyword(tr.dataset.term); });
   });
+  $$(".similar-toggle", v).forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const t = b.dataset.term;
+    state.expanded.has(t) ? state.expanded.delete(t) : state.expanded.add(t);
+    renderRankings();
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -484,7 +617,7 @@ async function openKeyword(term, animate = true) {
   $("#drawer-backdrop").hidden = false;
   d.focus();
   let k;
-  try { k = await api(`/api/keyword?term=${encodeURIComponent(term)}${state.runId ? "&run=" + state.runId : ""}`); }
+  try { k = await api("/api/keyword" + qs({ term })); }
   catch (e) { body.innerHTML = `<div class="callout err">${esc(e.message)}</div>`; return; }
   if (drawerTerm !== term) return;
 
@@ -514,10 +647,11 @@ async function openKeyword(term, animate = true) {
       <div style="flex:1">
         <h1>${esc(term)}</h1>
         <div class="row" style="gap:6px;margin-top:6px">
-          ${k.rank ? `<span class="badge">#${k.rank} in the list</span>` : `<span class="badge">Not in the top list</span>`}
-          ${c.source ? `<span class="badge" title="${esc(SOURCE_HELP[c.source])}">${esc(SOURCE_LABEL[c.source])}</span>` : ""}
+          ${k.rank ? `<span class="badge">#${k.rank} in the list${k.grouped_under ? " (grouped)" : ""}</span>` : `<span class="badge">Not in the top list</span>`}
+          ${trackedMarkets().length > 1 ? `<span class="badge">${esc(marketName(k.run.market))}</span>` : ""}
+          ${c.source ? `<span class="badge" data-tip="${esc(SOURCE_HELP[c.source])}">${esc(SOURCE_LABEL[c.source])}</span>` : ""}
           ${pinned ? `<span class="badge pin">Pinned</span>` : ""}
-          ${k.ignored ? `<span class="badge" title="Matches a word in your ignore list (Settings)">Ignored</span>` : ""}
+          ${k.ignored ? `<span class="badge" data-tip="Matches a word in your ignore list (Settings)">Ignored</span>` : ""}
         </div>
       </div>
       <button class="icon-btn" id="drawer-close" aria-label="Close" style="font-size:20px">✕</button>
@@ -531,10 +665,12 @@ async function openKeyword(term, animate = true) {
       <input type="text" id="pin-note" value="${esc(k.pin.note || "")}" placeholder="e.g. core product, competitor brand…"></div>` : ""}
 
     <p class="muted" style="margin-top:16px">${summary}</p>
+    ${k.grouped_under ? `<p class="callout" style="margin-top:12px">Shown in the list as a variant of
+      <a href="javascript:void 0" class="open-kw" data-term="${esc(k.grouped_under)}">“${esc(k.grouped_under)}”</a>.</p>` : ""}
     <div class="facts">
-      <div class="fact"><div class="label">Popularity</div><div class="value">${fmtVol(c.volume)}</div></div>
-      <div class="fact"><div class="label">Momentum</div><div class="value">${momHtml(c.momentum)}</div></div>
-      <div class="fact"><div class="label">Score</div><div class="value">${score100(c.score) ?? "–"}${c.score != null ? '<span class="faint small"> / 100</span>' : ""}</div></div>
+      <div class="fact"><div class="label">Popularity ${info(`How often it's searched compared with “${anchor}”. 1× = the same.`)}</div><div class="value">${fmtVol(c.volume)}</div></div>
+      <div class="fact"><div class="label">Momentum ${info("Last 4 weeks compared with the 12 weeks before.")}</div><div class="value">${momHtml(c.momentum)}</div></div>
+      <div class="fact"><div class="label">Score ${info("0–100 blend of popularity and momentum, relative to the other keywords checked.")}</div><div class="value">${score100(c.score) ?? "–"}${c.score != null ? '<span class="faint small"> / 100</span>' : ""}</div></div>
     </div>
 
     ${k.values.length ? `<div class="section">
@@ -547,12 +683,17 @@ async function openKeyword(term, animate = true) {
     </div>` : ""}
 
     ${k.rank || k.regions.length ? `<div class="section">
-      <h2>Where people search for it</h2>
+      <h2>Where people search for it ${info(`Ranked by share of searches, not total searches: 100 is where this keyword is most popular relative to everything else people search there.`)}</h2>
       ${!k.regions_fetched ? '<p class="muted">This keyword moved into the list after you ignored another one. Its countries are looked up on the next refresh.</p>' : hbars(regionsShown, `100 = the ${k.region_kind} where this keyword takes the biggest share of searches. Showing the top ${regionsShown.length} of ${k.regions.length}.${k.small_hidden ? " Small countries are hidden (Settings → Advanced)." : ""}`)}
     </div>` : ""}
 
+    ${k.similar.length ? `<div class="section">
+      <h2>Similar keywords ${info("Variants of this search folded into this row of the list. Click one to see its own chart.")}</h2>
+      <div class="row" style="gap:6px">${k.similar.map((s) => `<button type="button" class="badge similar-toggle open-kw" data-term="${esc(s.term)}">${esc(s.term)} · ${fmtVol(s.volume)}</button>`).join("")}</div>
+    </div>` : ""}
+
     <div class="section">
-      <h2>How it was found</h2>
+      <h2>How it was found ${info("Seeds are your starting keywords. Rising and popular searches are ones Google listed as related to a seed.")}</h2>
       ${c.source === "pin" && !k.discovered_from.length ? `<p class="muted">You pinned it.</p>` : ""}
       ${c.source === "seed" ? `<p class="muted">It's one of your seed keywords.</p>` : ""}
       ${c.source === "anchor" ? `<p class="muted">It's the comparison keyword.</p>` : ""}
@@ -568,6 +709,7 @@ async function openKeyword(term, animate = true) {
     </div>` : ""}`;
 
   $("#drawer-close").addEventListener("click", closeDrawer);
+  $$(".open-kw", body).forEach((a) => a.addEventListener("click", () => openKeyword(a.dataset.term)));
   const note = $("#pin-note");
   if (note) note.addEventListener("change", async () => {
     await api("/api/pins", { method: "PATCH", body: { term, note: note.value } });
@@ -589,6 +731,105 @@ function closeDrawer() {
 }
 $("#drawer-backdrop").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+
+// ---------------------------------------------------------------------------
+// view: part ideas (Google autocomplete, grouped by part)
+// ---------------------------------------------------------------------------
+const ideasUi = { q: "", newOnly: false, open: new Set() };
+const GOOGLE_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+
+async function renderIdeas() {
+  const v = $("#view");
+  const data = await api("/api/ideas" + qs(state.ideaSeed ? { seed: state.ideaSeed } : {}));
+  const where = marketName(state.market);
+  const head = `<div class="page-head"><div>
+      <h1>Part ideas${trackedMarkets().length > 1 ? " · " + esc(where) : ""}</h1>
+      <p class="muted">The specific things people type into Google for each seed, grouped by part. Good for spotting products to make.</p></div></div>`;
+  if (!data.run) {
+    v.innerHTML = head + `<div class="card empty">${data.enabled
+      ? `<h2>No part ideas yet</h2><p class="muted">They're collected at the end of each refresh. Run one with <b>Refresh now</b>, or wait for the next automatic update.</p>`
+      : `<h2>Part ideas are turned off</h2><p class="muted">Turn them on in <a href="#settings">Settings</a>, then refresh.</p>`}</div>`;
+    return;
+  }
+  state.ideaSeed = data.seed;
+  const q = ideasUi.q.toLowerCase();
+  const keep = (p) => (!q || p.term.includes(q)) && (!ideasUi.newOnly || p.new);
+  const groups = data.groups.map((g) => ({ ...g, shown: g.phrases.filter(keep) })).filter((g) => g.shown.length);
+  const singles = data.singles.filter(keep);
+  const newCount = data.groups.reduce((a, g) => a + g.phrases.filter((p) => p.new).length, 0) + data.singles.filter((p) => p.new).length;
+
+  const phraseRow = (p) => `<li>
+      <span class="phrase">${esc(p.term)}</span>
+      ${p.new ? '<span class="badge new" data-tip="Not suggested by Google for this seed last time">NEW</span>' : ""}
+      <span class="spacer"></span>
+      <a class="icon-btn" href="https://www.google.com/search?q=${encodeURIComponent(p.term)}" target="_blank" rel="noopener"
+        data-tip="Search Google for this (opens a new tab)" aria-label="Search Google for ${esc(p.term)}">${GOOGLE_SVG}</a>
+      ${pinBtn(p.term, p.pinned)}
+    </li>`;
+  const card = (g) => {
+    const open = ideasUi.open.has(g.key) || q || ideasUi.newOnly;
+    const list = open ? g.shown : g.shown.slice(0, 6);
+    const more = g.shown.length - list.length;
+    return `<div class="card idea-card">
+      <div class="idea-head"><h3>${esc(g.label)}</h3>
+        <span class="badge" data-tip="How many different searches Google suggested for this part">${g.shown.length} searches</span>
+        <button type="button" class="btn ghost small idea-hide" data-word="${esc(g.label)}"
+          data-tip="Not relevant? Adds “${esc(g.label)}” to your ignore list, which hides it here and in the rankings. You can undo it.">Hide</button></div>
+      <ul class="phrases">${list.map(phraseRow).join("")}</ul>
+      ${more > 0 ? `<button type="button" class="btn ghost small idea-more" data-key="${esc(g.key)}">Show ${more} more</button>` : ""}
+    </div>`;
+  };
+
+  v.innerHTML = `${head}
+    <div class="toolbar">
+      <span class="muted small">Seed ${info("Your seed keywords from Settings. Pick one to see what people search alongside it.")}</span>
+      <div class="seg" role="group" aria-label="Seed">${data.seeds.map((sd) =>
+        `<button data-seed="${esc(sd)}" class="${sd === data.seed ? "on" : ""}">${esc(sd)}</button>`).join("")}</div>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="idea-q" placeholder="Filter, e.g. injector" value="${esc(ideasUi.q)}" style="width:220px">
+      ${data.has_previous ? `<label class="toggle small"><input type="checkbox" id="idea-new" ${ideasUi.newOnly ? "checked" : ""}> New since last refresh only (${newCount})</label>` : ""}
+      <span class="spacer"></span>
+      <span class="muted small">${data.total} searches in ${data.groups.length} groups${data.hidden ? ` · ${data.hidden} hidden by your ignore list` : ""}
+        ${info("No search counts here: these phrases are too specific for Google Trends to measure. Google lists the most common ones first, so bigger groups mean more ways people look for that part.")}</span>
+    </div>
+    ${groups.length || singles.length ? `<div class="idea-grid">${groups.map(card).join("")}</div>` : `<div class="card empty"><p class="muted">Nothing matches.</p></div>`}
+    ${singles.length ? `<div class="card card-pad" style="margin-top:16px">
+      <h2>Other searches ${info("Phrases that didn't share a part name with any other phrase.")}</h2>
+      <ul class="phrases cols">${singles.map(phraseRow).join("")}</ul></div>` : ""}
+    <details class="card card-pad" style="margin-top:16px">
+      <summary>How part ideas work</summary>
+      <div class="stack muted" style="margin-top:10px">
+        <p>At the end of each refresh, the tracker types each seed into Google's search box followed by every letter
+        (“${esc(data.seed)} a”, “${esc(data.seed)} b”, …) and saves what Google suggests. That's what people actually search for.</p>
+        <p>Phrases are grouped by the first word that names a thing, so “alh injectors”, “alh injector nozzles” and
+        “alh tdi injector seals” all land under <b>injector</b>.</p>
+        <p>To track a phrase's popularity over time, <b>pin</b> it. Very specific phrases are often too rare for Google Trends
+        to measure, in which case it shows “no data”.</p>
+        <p>Off-topic results (like “alh dental clinic”)? Add a word to the ignore list in <a href="#settings">Settings</a>.</p>
+      </div>
+    </details>`;
+
+  $$(".seg button[data-seed]", v).forEach((b) => b.addEventListener("click", () => { state.ideaSeed = b.dataset.seed; ideasUi.open.clear(); renderIdeas(); }));
+  $("#idea-q").addEventListener("input", (e) => {
+    ideasUi.q = e.target.value;
+    clearTimeout(renderIdeas.t);
+    renderIdeas.t = setTimeout(() => renderIdeas().then(() => { const i = $("#idea-q"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }), 200);
+  });
+  const nw = $("#idea-new");
+  if (nw) nw.addEventListener("change", () => { ideasUi.newOnly = nw.checked; renderIdeas(); });
+  $$(".idea-more", v).forEach((b) => b.addEventListener("click", () => { ideasUi.open.add(b.dataset.key); renderIdeas(); }));
+  $$(".idea-hide", v).forEach((b) => b.addEventListener("click", async () => {
+    const word = b.dataset.word;
+    try { await api("/api/ignore", { method: "POST", body: { word } }); } catch (e) { toast(e.message, true); return; }
+    hideTip();
+    undoToast(`Hid “${word}”. It's in your ignore list in Settings.`, async () => {
+      await api("/api/ignore/undo", { method: "POST", body: { word } });
+      renderIdeas();
+    });
+    renderIdeas();
+  }));
+}
 
 // ---------------------------------------------------------------------------
 // view: all keywords (whole candidate pool)
@@ -613,11 +854,28 @@ function wireAddForm(form) {
 }
 
 async function renderExplore() {
-  const data = await api("/api/candidates" + runQS());
+  const data = await api("/api/candidates" + qs());
   const v = $("#view");
   if (!data.run) { v.innerHTML = emptyState(); return; }
   const ex = state.explore;
   const filters = { all: "All", rising: "Rising", top: "Popular related", seed: "Seeds", pin: "Pinned", ranked: "In top list", ignored: "Ignored", problem: "Problems" };
+  const FILTER_HELP = {
+    all: "Every keyword checked in this refresh",
+    rising: "Searches Google says are growing fast alongside one of your seeds",
+    top: "Searches Google says are commonly made alongside one of your seeds",
+    seed: "Your own starting keywords from Settings",
+    pin: "Keywords you pinned",
+    ranked: "Keywords shown on the Rankings page, including ones folded in as similar",
+    ignored: "Hidden because they contain a word from your ignore list",
+    problem: "Google returned no usable data for these",
+  };
+  const COL_HELP = {
+    source: "How the keyword got here: one of your seeds, a pin, or a search Google listed as related to a seed.",
+    volume: `How often it's searched compared with “${data.run.anchor}”. 1× = the same.`,
+    momentum: "Last 4 weeks compared with the 12 weeks before.",
+    score: "0–100 blend of popularity and momentum. The Rankings page is sorted by this.",
+    rank: "Its position on the Rankings page. “in #3” means it's folded into row 3 as a similar keyword.",
+  };
   const counts = {};
   for (const f of Object.keys(filters)) counts[f] = data.items.filter((i) => matchFilter(i, f)).length;
 
@@ -631,12 +889,12 @@ async function renderExplore() {
     <div class="toolbar">
       <input type="search" id="q" placeholder="Search keywords…" value="${esc(ex.q)}" style="width:240px">
       <div class="seg" role="group" aria-label="Filter">${Object.entries(filters).map(([k, l]) =>
-        counts[k] || k === "all" ? `<button data-f="${k}" class="${ex.filter === k ? "on" : ""}">${l} <span class="faint">${counts[k]}</span></button>` : "").join("")}</div>
+        counts[k] || k === "all" ? `<button data-f="${k}" class="${ex.filter === k ? "on" : ""}" data-tip="${esc(FILTER_HELP[k])}">${l} <span class="faint">${counts[k]}</span></button>` : "").join("")}</div>
     </div>
     <div class="card table-wrap"><table>
       <thead><tr>
         ${[["term", "Keyword"], ["source", "Found via"], ["volume", "Popularity", "right"], ["momentum", "Momentum", "right"], ["score", "Score"], ["rank", "Rank", "right"]]
-          .map(([k, l, cls]) => `<th class="sortable ${cls || ""}" data-sort="${k}">${l}${ex.sort === k ? (ex.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}
+          .map(([k, l, cls]) => `<th class="sortable ${cls || ""}" data-sort="${k}">${l}${ex.sort === k ? (ex.dir > 0 ? " ↑" : " ↓") : ""}${COL_HELP[k] ? " " + info(COL_HELP[k]) : ""}</th>`).join("")}
         <th></th></tr></thead>
       <tbody id="ex-body"></tbody>
     </table></div>`;
@@ -654,13 +912,14 @@ async function renderExplore() {
     $("#ex-body").innerHTML = rows.length ? rows.map((r) => `
       <tr class="clickable" tabindex="0" data-term="${esc(r.term)}">
         <td class="kw-cell"><span class="kw">${esc(r.term)}</span>
-          ${r.error ? `<span class="badge" style="margin-left:6px" title="${esc(r.error)}">⚠ no data</span>` : ""}
-          ${r.ignored ? `<span class="badge" style="margin-left:6px" title="Matches a word in your ignore list (Settings)">Ignored</span>` : ""}</td>
-        <td><span class="badge" title="${esc(SOURCE_HELP[r.source])}">${esc(SOURCE_LABEL[r.source] || r.source)}</span></td>
+          ${r.error ? `<span class="badge" style="margin-left:6px" data-tip="${esc(r.error)}">⚠ no data</span>` : ""}
+          ${r.ignored ? `<span class="badge" style="margin-left:6px" data-tip="Matches a word in your ignore list (Settings)">Ignored</span>` : ""}</td>
+        <td><span class="badge" data-tip="${esc(SOURCE_HELP[r.source])}">${esc(SOURCE_LABEL[r.source] || r.source)}</span></td>
         <td class="right num">${fmtVol(r.volume)}</td>
         <td class="right num">${momHtml(r.momentum)}</td>
         <td>${meterHtml(r.score)}</td>
-        <td class="right num">${r.rank ? "#" + r.rank : '<span class="faint">–</span>'}</td>
+        <td class="right num">${!r.rank ? '<span class="faint">–</span>' : r.grouped_under
+          ? `<span class="faint" data-tip="Folded into row ${r.rank} (“${esc(r.grouped_under)}”) as a similar keyword">in #${r.rank}</span>` : "#" + r.rank}</td>
         <td class="right">${pinBtn(r.term, r.pinned_now)}</td>
       </tr>`).join("") : `<tr><td colspan="7" class="muted" style="text-align:center;padding:30px">No keywords match.</td></tr>`;
     $$("#ex-body tr.clickable").forEach((tr) => {
@@ -692,7 +951,7 @@ function matchFilter(i, f) {
 // view: pinned
 // ---------------------------------------------------------------------------
 async function renderPinned() {
-  const pins = await api("/api/pins");
+  const pins = await api("/api/pins" + qs());
   const v = $("#view");
   v.innerHTML = `
     <div class="page-head">
@@ -702,11 +961,12 @@ async function renderPinned() {
     <div class="card card-pad" style="margin-bottom:16px">${addKeywordForm("add-form", "Pin keyword")}
       <p class="help" style="margin-top:8px">Tip: you can also pin straight from the Rankings or All keywords lists using the pin icon.</p></div>
     ${pins.length ? `<div class="card table-wrap"><table>
-      <thead><tr><th>Keyword</th><th>Note</th><th class="right">Current rank</th><th>Pinned</th><th></th></tr></thead>
+      <thead><tr><th>Keyword</th><th>Note ${info("Only you see this. Handy for remembering why you pinned something.")}</th>
+        <th class="right">Current rank ${info("Its position on the Rankings page for the selected market. “pending” means it hasn't been measured yet; that happens on the next refresh.")}</th><th>Pinned</th><th></th></tr></thead>
       <tbody>${pins.map((p) => `<tr>
         <td class="kw-cell"><a href="javascript:void 0" class="kw open-kw" data-term="${esc(p.term)}">${esc(p.term)}</a></td>
         <td><input type="text" class="pin-note" data-term="${esc(p.term)}" value="${esc(p.note || "")}" placeholder="Add a note…" style="width:100%;min-width:160px"></td>
-        <td class="right num">${p.rank ? "#" + p.rank : '<span class="faint" title="Will be measured on the next refresh">pending</span>'}</td>
+        <td class="right num">${p.rank ? "#" + p.rank : '<span class="faint" data-tip="Will be measured on the next refresh">pending</span>'}</td>
         <td class="muted">${fmtDate(p.pinned_at)}</td>
         <td class="right"><button class="btn small ghost danger pin-toggle" data-term="${esc(p.term)}" data-pinned="1">Unpin</button></td>
       </tr>`).join("")}</tbody></table></div>`
@@ -729,19 +989,23 @@ async function renderHistory() {
     <div class="page-head"><div><h1>Refresh history</h1>
       <p class="muted">Every snapshot is kept. Open an older one to see how the rankings looked back then.</p></div></div>
     ${runs.length ? `<div class="card table-wrap"><table>
-      <thead><tr><th>Started</th><th>Status</th><th class="right">Took</th><th class="right">Keywords checked</th><th class="right">Google requests</th><th>Settings used</th><th></th></tr></thead>
+      <thead><tr><th>Started</th><th>Market</th><th>Status ${info("Complete: everything worked. Partial: Google refused some requests, but the rest is used. Failed or Cancelled: nothing usable.")}</th>
+        <th class="right">Took</th><th class="right">Keywords checked</th>
+        <th class="right">Google requests ${info("How many times the tracker asked Google for data. Google limits how many it allows, which is why refreshes are slow.")}</th>
+        <th>Compared against ${info("The comparison keyword used for popularity in that snapshot.")}</th><th></th></tr></thead>
       <tbody>${runs.map((r) => {
         const took = r.finished_at ? (new Date(r.finished_at) - new Date(r.started_at)) / 1000 : null;
         const viewable = r.ranked > 0;
         return `<tr>
           <td>${fmtDateTime(r.started_at)}<div class="faint small">${relTime(r.started_at)}</div></td>
+          <td>${esc(marketName(r.market))}</td>
           <td>${statusHtml(r.status)}
             ${r.error ? `<details><summary class="small muted" style="font-weight:500">Details</summary><pre class="err">${esc(r.error)}</pre></details>` : ""}</td>
           <td class="right num">${r.status === "running" ? "…" : fmtDuration(took)}</td>
           <td class="right num">${r.candidates}</td>
           <td class="right num">${r.requests_made ?? "–"}</td>
-          <td class="muted small">vs “${esc(r.anchor)}” · ${r.geo ? esc(r.geo) : "worldwide"}</td>
-          <td class="right">${viewable ? `<a class="btn small" href="#rankings?run=${r.id}">View rankings</a>` : ""}</td>
+          <td class="muted small">“${esc(r.anchor)}”</td>
+          <td class="right">${viewable ? `<a class="btn small" href="#rankings?m=${r.market}&run=${r.id}">View rankings</a>` : ""}</td>
         </tr>`; }).join("")}</tbody></table></div>
       <p class="help" style="margin-top:10px"><b>Partial</b> means Google refused or skipped some requests; the rankings still use everything that came back.
       If it happens often, raise the delays under Settings → Advanced.</p>`
@@ -751,71 +1015,83 @@ async function renderHistory() {
 // ---------------------------------------------------------------------------
 // view: settings
 // ---------------------------------------------------------------------------
-const GEOS = [["", "Worldwide"], ["US", "United States"], ["CA", "Canada"], ["GB", "United Kingdom"], ["AU", "Australia"],
-  ["NZ", "New Zealand"], ["ZA", "South Africa"], ["DE", "Germany"], ["other", "Other country code…"]];
-
 async function renderSettings() {
   const data = await api("/api/settings");
   const cfg = structuredClone(data.config);
   const v = $("#view");
   const momShare = Math.round((cfg.ranking.momentum_weight / (cfg.ranking.volume_weight + cfg.ranking.momentum_weight)) * 100);
-  const knownGeo = GEOS.some(([c]) => c === cfg.trends.geo);
+  const markets = cfg.trends.geos.map((g) => g || "WW");
 
   v.innerHTML = `
     <div class="page-head"><div><h1>Settings</h1>
-      <p class="muted">Ignored words apply as soon as you save; other changes apply from the next refresh. Nothing here deletes past data.</p></div></div>
+      <p class="muted">Ignored words, list size and grouping apply as soon as you save. Everything else applies from the next refresh. Nothing here deletes past data.</p></div></div>
     <form id="settings" class="settings" autocomplete="off">
       <section class="card card-pad">
         <h2>What to track</h2>
         <div class="field" style="margin-top:14px">
-          <label>Seed keywords</label>
-          <span class="help">Starting points. Each refresh, Google's related and rising searches for these are discovered automatically. Type a keyword and press Enter.</span>
+          <label>Seed keywords ${info("Your starting points. Each refresh asks Google which searches are related to these and rising, and adds them automatically. Seeds also drive the Part ideas page.")}</label>
+          <span class="help">Type a keyword and press Enter. Click × to remove one.</span>
           <div class="chips" data-key="seeds"></div>
         </div>
         <div class="field">
-          <label>Ignore keywords containing</label>
-          <span class="help">Discovered keywords that contain any of these words are hidden from the lists as soon as you save, and skipped in future refreshes (e.g. “meaning”, “near me”, a brand you don't care about). Seeds and pinned keywords are never hidden.</span>
+          <label>Ignore keywords containing ${info("Any discovered keyword or part idea containing one of these words is hidden right away and skipped in future refreshes. Your seeds and pinned keywords are never hidden.")}</label>
+          <span class="help">For off-topic results, e.g. “rc”, “meaning”, “near me”.</span>
           <div class="chips" data-key="blocklist"></div>
         </div>
         <div class="grid-2" style="margin-top:18px">
           <div class="field">
-            <label for="anchor">Comparison keyword</label>
+            <label for="anchor">Comparison keyword ${info("Google never gives real search counts, so every keyword's popularity is measured against this one (1× = as popular as this). Pick something mid-sized in your niche. Changing it means new snapshots aren't directly comparable with old ones.")}</label>
             <input type="text" id="anchor" value="${esc(cfg.trends.anchor)}">
-            <span class="help">Every keyword's popularity is measured against this one. Pick something mid-sized in your niche. Changing it makes new snapshots not directly comparable with old ones.</span>
           </div>
           <div class="field">
-            <label for="geo">Region</label>
-            <select id="geo">${GEOS.map(([c, n]) => `<option value="${c}" ${(knownGeo ? c === cfg.trends.geo : c === "other") ? "selected" : ""}>${n}</option>`).join("")}</select>
-            <input type="text" id="geo-other" maxlength="2" placeholder="2-letter code, e.g. MX" value="${knownGeo ? "" : esc(cfg.trends.geo)}" ${knownGeo ? "hidden" : ""}>
-            <span class="help">Worldwide shows a per-country breakdown; a single country shows its provinces/states instead.</span>
-          </div>
-          <div class="field">
-            <label for="timeframe">Time range</label>
+            <label for="timeframe">Time range ${info("How far back the trend charts and popularity look. Past 12 months gives weekly detail and is best for spotting recent growth.")}</label>
             <select id="timeframe">${Object.entries(data.timeframes).map(([k, n]) => `<option value="${k}" ${k === cfg.trends.timeframe ? "selected" : ""}>${n}</option>`).join("")}</select>
           </div>
         </div>
       </section>
 
       <section class="card card-pad">
+        <h2>Markets ${info(`Where the searches come from. Each market gets its own rankings, part ideas and breakdowns; switch between them with the picker at the top of the page. Each one is a separate refresh, so more markets take longer. Up to ${data.max_markets}.`)}</h2>
+        <p class="help" style="margin-top:6px">Worldwide breaks results down by country. A single country breaks them down by province or state.</p>
+        <div class="row" id="markets" style="margin-top:12px"></div>
+        <div class="row" style="margin-top:10px">
+          <select id="add-market" aria-label="Add a market"></select>
+          <button type="button" class="btn" id="add-market-btn">Add market</button>
+        </div>
+      </section>
+
+      <section class="card card-pad">
         <h2>Ranking</h2>
         <div class="field" style="margin-top:14px">
-          <label for="balance">What matters more?</label>
+          <label for="balance">What matters more? ${info("Popularity favours keywords lots of people search. Momentum favours keywords that are growing, even if they're small. Growth is often the better hint for new products.")}</label>
           <div class="slider-row"><span class="muted small">Popularity</span>
             <input type="range" id="balance" min="0" max="100" step="5" value="${momShare}">
             <span class="muted small">Momentum</span></div>
           <span class="help" id="balance-text"></span>
         </div>
         <div class="field">
-          <label for="top_n">Keywords in the ranked list</label>
+          <label for="top_n">Keywords in the ranked list ${info("How many rows the Rankings page shows. Country breakdowns are fetched for each of these, so a longer list adds about 15 seconds per extra keyword to each refresh.")}</label>
           <input type="number" id="top_n" min="5" max="50" value="${cfg.ranking.top_n}" style="width:100px">
-          <span class="help">Country breakdowns are fetched for this many keywords, so bigger lists take longer.</span>
+        </div>
+        <div class="field">
+          <label class="toggle"><input type="checkbox" id="group_similar" ${cfg.ranking.group_similar ? "checked" : ""}>
+            Group similar keywords ${info("Folds variants of the same search into one row, like “1.9 alh” and “1.9 alh tdi” under “alh”, so the list shows more different things. Part names like “alh turbo” always keep their own row.")}</label>
+        </div>
+      </section>
+
+      <section class="card card-pad">
+        <h2>Part ideas</h2>
+        <div class="field" style="margin-top:14px">
+          <label class="toggle"><input type="checkbox" id="part_ideas" ${cfg.discovery.part_ideas ? "checked" : ""}>
+            Collect part ideas from Google autocomplete ${info("At the end of each refresh, types each seed plus every letter into Google's search box (“alh a”, “alh b”…) and saves the suggestions. That's how the Part ideas page finds specific searches like “alh injector seals”. Adds about 1 minute per seed per market.")}</label>
         </div>
       </section>
 
       <section class="card card-pad">
         <h2>Automatic refresh</h2>
         <div class="field" style="margin-top:14px">
-          <label class="toggle"><input type="checkbox" id="sched-on" ${cfg.schedule.enabled ? "checked" : ""}> Refresh automatically every week</label>
+          <label class="toggle"><input type="checkbox" id="sched-on" ${cfg.schedule.enabled ? "checked" : ""}> Refresh automatically every week
+            ${info("Google Trends adds one new week of data at a time, so refreshing more often than weekly adds almost nothing new.")}</label>
         </div>
         <div class="row" id="sched-when" style="margin-top:10px">
           <span class="muted">Every</span>
@@ -828,19 +1104,19 @@ async function renderSettings() {
 
       <details class="card card-pad">
         <summary>Advanced</summary>
+        <p class="help" style="margin-top:10px">The defaults work well. Change these only if refreshes keep showing “Partial” in History, or you want to fine-tune discovery.</p>
         <div class="grid-2" style="margin-top:14px">
-          ${numField("rising_per_seed", "Rising searches per seed", cfg.discovery.rising_per_seed, 0, 25)}
-          ${numField("top_per_seed", "Popular searches per seed", cfg.discovery.top_per_seed, 0, 25)}
-          ${numField("max_candidates", "Max keywords checked per refresh", cfg.discovery.max_candidates, 10, 200)}
-          ${numField("recent_weeks", "Momentum: recent weeks", cfg.ranking.recent_weeks, 1, 26)}
-          ${numField("baseline_weeks", "Momentum: compared against previous weeks", cfg.ranking.baseline_weeks, 1, 52)}
-          ${numField("min_delay_s", "Min. seconds between requests", cfg.rate_limit.min_delay_s, 2, 120)}
-          ${numField("max_delay_s", "Max. seconds between requests", cfg.rate_limit.max_delay_s, 2, 180)}
-          ${numField("max_retries", "Retries when Google says “too many requests”", cfg.rate_limit.max_retries, 0, 10)}
+          ${numField("rising_per_seed", "Rising searches per seed", cfg.discovery.rising_per_seed, 0, 25, "How many fast-growing related searches to take from each seed.")}
+          ${numField("top_per_seed", "Popular searches per seed", cfg.discovery.top_per_seed, 0, 25, "How many common related searches to take from each seed.")}
+          ${numField("max_candidates", "Max keywords checked per refresh", cfg.discovery.max_candidates, 10, 200, "Total keywords measured each refresh, across all seeds. Every 4 extra adds one request (about 15 seconds).")}
+          ${numField("recent_weeks", "Momentum: recent weeks", cfg.ranking.recent_weeks, 1, 26, "Momentum compares the average of this many latest weeks…")}
+          ${numField("baseline_weeks", "Momentum: compared against previous weeks", cfg.ranking.baseline_weeks, 1, 52, "…with the average of this many weeks before them.")}
+          ${numField("min_delay_s", "Min. seconds between requests", cfg.rate_limit.min_delay_s, 2, 120, "Google blocks clients that ask too fast. Raise this if refreshes often end up Partial.")}
+          ${numField("max_delay_s", "Max. seconds between requests", cfg.rate_limit.max_delay_s, 2, 180, "Each pause is a random time between the min and max, which looks less robotic to Google.")}
+          ${numField("max_retries", "Retries when Google says “too many requests”", cfg.rate_limit.max_retries, 0, 10, "Each retry waits twice as long as the last (1 min, 2 min, 4 min…).")}
         </div>
-        <label class="toggle" style="margin-top:14px"><input type="checkbox" id="hide_small" ${cfg.regions.hide_small_countries ? "checked" : ""}> Hide small countries and territories (under ~1 million people)</label>
-        <p class="help">Google ranks countries by share of searches, so places like St. Helena can top the list from a handful of searches. Applies to past snapshots too.</p>
-        <p class="help" style="margin-top:10px">Google blocks clients that ask too fast. Longer delays make refreshes slower but more reliable.</p>
+        <label class="toggle" style="margin-top:14px"><input type="checkbox" id="hide_small" ${cfg.regions.hide_small_countries ? "checked" : ""}>
+          Hide small countries and territories ${info("Google ranks countries by share of searches, so places with under ~1 million people (like St. Helena) can top the list from a handful of searches. Applies to past snapshots too.")}</label>
       </details>
 
       <div class="savebar">
@@ -855,6 +1131,30 @@ async function renderSettings() {
   const markDirty = () => { state.settingsDirty = true; $("#dirty").textContent = "Unsaved changes"; updateEstimate(); };
   $$(".chips", v).forEach((box) => setupChips(box, chipState[box.dataset.key], markDirty));
 
+  // markets: removable chips + a picker of everything not yet added
+  const drawMarkets = () => {
+    $("#markets").innerHTML = markets.map((c, i) => `<span class="chip">${esc(marketName(c))}
+      ${markets.length > 1 ? `<button type="button" data-i="${i}" aria-label="Remove ${esc(marketName(c))}">×</button>` : ""}</span>`).join("");
+    $$("#markets button").forEach((b) => b.addEventListener("click", () => { markets.splice(+b.dataset.i, 1); drawMarkets(); markDirty(); }));
+    const common = ["WW", "US", "CA", "GB", "AU", "NZ"].filter((c) => !markets.includes(c));
+    const rest = COUNTRY_CODES.filter((c) => !markets.includes(c) && !common.includes(c))
+      .sort((a, b) => marketName(a).localeCompare(marketName(b)));
+    const opt = (c) => `<option value="${c}">${esc(marketName(c))}</option>`;
+    $("#add-market").innerHTML = `<option value="" selected disabled>Choose a country…</option>`
+      + (common.length ? `<optgroup label="Common">${common.map(opt).join("")}</optgroup>` : "")
+      + `<optgroup label="All countries">${rest.map(opt).join("")}</optgroup>`;
+    const full = markets.length >= data.max_markets;
+    $("#add-market").disabled = full;
+    $("#add-market-btn").disabled = true;  // until a country is chosen
+    $("#add-market-btn").dataset.tip = full ? `That's the maximum of ${data.max_markets}.` : "";
+  };
+  drawMarkets();
+  $("#add-market").addEventListener("change", () => { $("#add-market-btn").disabled = !$("#add-market").value; });
+  $("#add-market-btn").addEventListener("click", () => {
+    const c = $("#add-market").value;
+    if (c && !markets.includes(c) && markets.length < data.max_markets) { markets.push(c); drawMarkets(); markDirty(); }
+  });
+
   const updateBalance = () => {
     const m = +$("#balance").value;
     const txt = m === 0 ? "Pure popularity: the most-searched keywords win."
@@ -864,23 +1164,21 @@ async function renderSettings() {
   };
   updateBalance();
   $("#balance").addEventListener("input", updateBalance);
-  $("#geo").addEventListener("change", () => { $("#geo-other").hidden = $("#geo").value !== "other"; });
   const syncSched = () => $$("#sched-when select").forEach((s) => (s.disabled = !$("#sched-on").checked));
   syncSched();
   $("#sched-on").addEventListener("change", syncSched);
-  $("#settings").addEventListener("input", markDirty);
-  $("#settings").addEventListener("change", markDirty);
+  $("#settings").addEventListener("input", (e) => { if (e.target.id !== "add-market") markDirty(); });
+  $("#settings").addEventListener("change", (e) => { if (e.target.id !== "add-market") markDirty(); });
 
   function collect() {
     const n = (id) => +$("#" + id).value;
-    const geo = $("#geo").value === "other" ? $("#geo-other").value.trim().toUpperCase() : $("#geo").value;
     const m = n("balance") / 100;
     return {
-      trends: { ...cfg.trends, anchor: $("#anchor").value, geo, timeframe: $("#timeframe").value },
+      trends: { ...cfg.trends, anchor: $("#anchor").value, geos: markets.map((c) => (c === "WW" ? "" : c)), timeframe: $("#timeframe").value },
       discovery: { seeds: chipState.seeds, blocklist: chipState.blocklist, rising_per_seed: n("rising_per_seed"),
-        top_per_seed: n("top_per_seed"), max_candidates: n("max_candidates") },
+        top_per_seed: n("top_per_seed"), max_candidates: n("max_candidates"), part_ideas: $("#part_ideas").checked },
       ranking: { ...cfg.ranking, top_n: n("top_n"), volume_weight: +(1 - m).toFixed(2), momentum_weight: +m.toFixed(2),
-        recent_weeks: n("recent_weeks"), baseline_weeks: n("baseline_weeks") },
+        recent_weeks: n("recent_weeks"), baseline_weeks: n("baseline_weeks"), group_similar: $("#group_similar").checked },
       regions: { hide_small_countries: $("#hide_small").checked },
       rate_limit: { ...cfg.rate_limit, min_delay_s: n("min_delay_s"), max_delay_s: n("max_delay_s"), max_retries: n("max_retries") },
       schedule: { enabled: $("#sched-on").checked, weekday: n("weekday"), hour: n("hour") },
@@ -892,8 +1190,9 @@ async function renderSettings() {
     clearTimeout(estTimer);
     estTimer = setTimeout(async () => {
       const r = await api("/api/settings/estimate", { method: "POST", body: collect() });
+      const per = r.estimate && r.estimate.markets > 1 ? ` (${r.estimate.markets} markets)` : "";
       $("#estimate").innerHTML = r.error ? `<span style="color:var(--critical)">⚠ ${esc(r.error)}</span>`
-        : `Each refresh: about ${r.estimate.requests} Google requests, ~${fmtDuration(r.estimate.seconds)}`;
+        : `Each refresh${per}: about ${fmtDuration(r.estimate.seconds)} ${info(`About ${r.estimate.requests} requests to Google, spaced out so Google doesn't block them. It runs in the background.`)}`;
     }, 250);
   }
   updateEstimate();
@@ -905,14 +1204,14 @@ async function renderSettings() {
       await api("/api/settings", { method: "PUT", body: collect() });
       state.settingsDirty = false;
       $("#dirty").textContent = "";
-      toast("Settings saved. Ignored words apply right away; everything else from the next refresh.");
-      pollStatus();
+      toast("Settings saved.");
+      await pollStatus();
     } catch (err) { toast(err.message, true); }
   });
 }
 
-function numField(id, label, value, min, max) {
-  return `<div class="field" style="margin:0"><label for="${id}" class="small">${label}</label>
+function numField(id, label, value, min, max, help = "") {
+  return `<div class="field" style="margin:0"><label for="${id}" class="small">${label}${help ? " " + info(help) : ""}</label>
     <input type="number" id="${id}" value="${value}" min="${min}" max="${max}" style="width:110px"></div>`;
 }
 

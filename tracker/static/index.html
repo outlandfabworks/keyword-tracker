@@ -15,14 +15,17 @@
   </div>
   <nav class="tabs" aria-label="Sections">
     <a href="#rankings" data-view="rankings">Rankings</a>
+    <a href="#ideas" data-view="ideas">Part ideas</a>
     <a href="#explore" data-view="explore">All keywords</a>
     <a href="#pinned" data-view="pinned">Pinned</a>
     <a href="#history" data-view="history">History</a>
     <a href="#settings" data-view="settings">Settings</a>
   </nav>
   <div class="topbar-right">
+    <select id="market" class="market-select" aria-label="Market to show" hidden></select>
     <div id="freshness" class="freshness muted small"></div>
     <button id="run-btn" class="btn primary">Refresh now</button>
+    <button id="quit-btn" class="btn ghost" hidden data-tip="Stop Keyword Tracker on this computer">Quit</button>
   </div>
 </header>
 

@@ -1,0 +1,94 @@
+name: Desktop apps
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: KeywordTracker-Windows.exe
+          - os: macos-15
+            artifact: KeywordTracker-Mac-AppleSilicon.zip
+          - os: macos-15-intel
+            artifact: KeywordTracker-Mac-Intel.zip
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      KWT_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.0.0' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -r requirements.txt pyinstaller==6.22.3 pillow
+      - name: Unit tests
+        run: python -m unittest
+      - name: Build
+        run: pyinstaller packaging/keyword-tracker.spec --noconfirm
+      - name: Package
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp dist/KeywordTracker.exe "${{ matrix.artifact }}"
+            echo "APP=dist/KeywordTracker.exe" >> "$GITHUB_ENV"
+          else
+            ditto -c -k --keepParent "dist/Keyword Tracker.app" "${{ matrix.artifact }}"
+            echo "APP=dist/Keyword Tracker.app/Contents/MacOS/Keyword Tracker" >> "$GITHUB_ENV"
+          fi
+          ls -l "${{ matrix.artifact }}"
+      - name: Launch it and check the page loads
+        run: |
+          DATA="$RUNNER_TEMP/kwt-smoke"
+          "$APP" --no-browser --no-schedule --data-dir "$DATA" > "$RUNNER_TEMP/console.txt" 2>&1 &
+          for i in $(seq 1 90); do
+            PORT=$(cat "$DATA/port" 2>/dev/null || true)
+            [ -n "$PORT" ] && curl -sf "http://127.0.0.1:$PORT/healthz" && break
+            sleep 2
+          done
+          echo; cat "$RUNNER_TEMP/console.txt"
+          BASE="http://127.0.0.1:$PORT"
+          curl -sf "$BASE/" | grep -q "<title>Keyword Tracker</title>"
+          curl -sf "$BASE/static/app.js" > /dev/null
+          curl -sf "$BASE/api/status" | python -c "import json,sys; d=json.load(sys.stdin); assert d['desktop'] is True, d"
+          curl -sf -X POST -H "Content-Type: application/json" -d "{}" "$BASE/api/quit"
+          sleep 5
+          if curl -sf "$BASE/healthz"; then echo "app did not quit"; exit 1; fi
+          echo "launch, page and quit OK"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l out
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" out/* --title "Keyword Tracker $GITHUB_REF_NAME" --notes-file packaging/release-notes.md
+          fi

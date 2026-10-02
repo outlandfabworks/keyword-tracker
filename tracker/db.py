@@ -74,6 +74,16 @@ CREATE TABLE IF NOT EXISTS rankings (
     PRIMARY KEY (run_id, rank)
 );
 
+-- Google autocomplete phrases per seed (the Part ideas tab).
+CREATE TABLE IF NOT EXISTS suggestions (
+    run_id    INTEGER NOT NULL REFERENCES runs(id),
+    seed      TEXT NOT NULL,
+    prefix    TEXT NOT NULL,        -- what was typed: "alh i"
+    term      TEXT NOT NULL,
+    position  INTEGER NOT NULL,     -- 0 = first suggestion
+    PRIMARY KEY (run_id, seed, prefix, term)
+);
+
 CREATE TABLE IF NOT EXISTS regions (
     run_id    INTEGER NOT NULL REFERENCES runs(id),
     term      TEXT NOT NULL,
@@ -186,9 +196,14 @@ def last_attempted_run(conn: sqlite3.Connection) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
 
 
-def last_completed_run(conn: sqlite3.Connection) -> sqlite3.Row | None:
+def last_completed_run(conn: sqlite3.Connection, geo: str | None = None) -> sqlite3.Row | None:
+    """Latest usable run, optionally for one market ("" = worldwide)."""
+    if geo is None:
+        return conn.execute(
+            "SELECT * FROM runs WHERE status IN ('ok', 'partial') ORDER BY id DESC LIMIT 1"
+        ).fetchone()
     return conn.execute(
-        "SELECT * FROM runs WHERE status IN ('ok', 'partial') ORDER BY id DESC LIMIT 1"
+        "SELECT * FROM runs WHERE status IN ('ok', 'partial') AND geo = ? ORDER BY id DESC LIMIT 1", (geo,)
     ).fetchone()
 
 
@@ -202,9 +217,11 @@ def ranking_for_run(conn: sqlite3.Connection, run_id: int) -> list[sqlite3.Row]:
 
 
 def previous_completed_run(conn: sqlite3.Connection, run_id: int) -> sqlite3.Row | None:
+    """The usable run before `run_id` for the same market."""
     return conn.execute(
-        "SELECT * FROM runs WHERE status IN ('ok', 'partial') AND id < ? ORDER BY id DESC LIMIT 1",
-        (run_id,),
+        """SELECT * FROM runs WHERE status IN ('ok', 'partial') AND id < ?
+           AND geo = (SELECT geo FROM runs WHERE id = ?) ORDER BY id DESC LIMIT 1""",
+        (run_id, run_id),
     ).fetchone()
 
 
@@ -254,14 +271,37 @@ def discovered_from(conn: sqlite3.Connection, run_id: int, term: str) -> list[sq
     ).fetchall()
 
 
-def rank_history(conn: sqlite3.Connection, term: str, limit: int = 26) -> list[sqlite3.Row]:
-    """Rank and score of a term across recent completed runs (unranked runs give rank NULL)."""
+def rank_history(conn: sqlite3.Connection, term: str, geo: str, limit: int = 26) -> list[sqlite3.Row]:
+    """Rank and score of a term across recent completed runs in one market (unranked runs give rank NULL)."""
     return conn.execute(
         """SELECT r.id AS run_id, r.started_at, k.rank, c.score, c.volume, c.momentum
            FROM runs r
            LEFT JOIN rankings k ON k.run_id = r.id AND k.term = ?
            LEFT JOIN candidates c ON c.run_id = r.id AND c.term = ?
-           WHERE r.status IN ('ok', 'partial')
+           WHERE r.status IN ('ok', 'partial') AND r.geo = ?
            ORDER BY r.id DESC LIMIT ?""",
-        (term, term, limit),
+        (term, term, geo, limit),
     ).fetchall()
+
+
+def suggestion_phrases(conn: sqlite3.Connection, run_id: int, seed: str) -> list[sqlite3.Row]:
+    """One row per distinct phrase: best position and how many prefixes surfaced it."""
+    return conn.execute(
+        """SELECT term, MIN(position) AS position, COUNT(*) AS hits FROM suggestions
+           WHERE run_id = ? AND seed = ? GROUP BY term""",
+        (run_id, seed),
+    ).fetchall()
+
+
+def suggestion_seeds(conn: sqlite3.Connection, run_id: int) -> list[str]:
+    return [r["seed"] for r in conn.execute(
+        "SELECT seed, MIN(rowid) AS first FROM suggestions WHERE run_id = ? GROUP BY seed ORDER BY first", (run_id,))]
+
+
+def last_run_with_suggestions(conn: sqlite3.Connection, geo: str, before_id: int | None = None) -> sqlite3.Row | None:
+    """Latest run in a market that collected part ideas (optionally before a given run)."""
+    return conn.execute(
+        """SELECT r.* FROM runs r WHERE r.geo = ? AND r.id < ? AND r.status IN ('ok', 'partial', 'cancelled')
+           AND EXISTS (SELECT 1 FROM suggestions s WHERE s.run_id = r.id) ORDER BY r.id DESC LIMIT 1""",
+        (geo, before_id if before_id is not None else 2**62),
+    ).fetchone()

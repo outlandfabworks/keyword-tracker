@@ -21,13 +21,11 @@ def cmd_run(args, conn) -> int:
                 logging.info("last run %d is %s old (< %s days); skipping", last["id"], age, args.if_stale)
                 return 0
 
-    from .pipeline import run  # deferred so pin/unpin work without importing pandas
-    from .trends import TrendsClient
+    from .pipeline import run_markets  # deferred so pin/unpin work without importing pandas
 
     cfg = db.get_config(conn, args.config)
-    client = TrendsClient(cfg.trends, cfg.regions, cfg.rate_limit)
-    run_id = run(conn, cfg, client)
-    print_top(conn, run_id)
+    for run_id in run_markets(conn, cfg):
+        print_top(conn, run_id)
     return 0
 
 
@@ -68,7 +66,7 @@ def cmd_pins(args, conn) -> int:
 
 def print_top(conn, run_id: int) -> None:
     run = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
-    print(f"\nrun {run['id']}  {run['started_at']}  status={run['status']}  anchor={run['anchor']!r}")
+    print(f"\nrun {run['id']}  {run['geo'] or 'worldwide'}  {run['started_at']}  status={run['status']}  anchor={run['anchor']!r}")
     print(f"{'#':>3}  {'keyword':<38} {'score':>6} {'volume':>8} {'momentum':>9}")
     for r in db.ranking_for_run(conn, run_id):
         fmt = lambda v, spec: format(v, spec) if v is not None else "-"

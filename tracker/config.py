@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
 DEFAULT_CONFIG = Path(os.environ.get("KWT_CONFIG", "/app/config.toml"))
@@ -14,9 +14,13 @@ TIMEFRAMES = {"today 12-m": "Past 12 months", "today 5-y": "Past 5 years"}
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
+MAX_MARKETS = 5
+
+
 @dataclass(frozen=True)
 class TrendsSettings:
-    geo: str = ""             # "" = worldwide
+    geos: list[str] = field(default_factory=lambda: [""])  # markets to track; "" = worldwide
+    geo: str = ""             # the market a run is fetching (set per run from `geos`)
     timeframe: str = "today 12-m"
     hl: str = "en-US"
     anchor: str = "overlanding"
@@ -34,6 +38,7 @@ class DiscoverySettings:
     top_per_seed: int = 3
     max_candidates: int = 60
     blocklist: list[str] = field(default_factory=list)
+    part_ideas: bool = True   # collect Google autocomplete phrases for each seed (the "Part ideas" tab)
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,7 @@ class RankingSettings:
     recent_weeks: int = 4
     baseline_weeks: int = 12
     momentum_floor: float = 0.05
+    group_similar: bool = True  # fold "1.9 alh" and "1.9 alh tdi" under "alh" so the list shows more distinct topics
 
 
 @dataclass(frozen=True)
@@ -76,7 +82,12 @@ class Config:
     schedule: ScheduleSettings = field(default_factory=ScheduleSettings)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["trends"].pop("geo")  # per-run detail, not a user setting
+        return d
+
+    def for_market(self, geo: str) -> "Config":
+        return replace(self, trends=replace(self.trends, geo=geo))
 
 
 def normalize_term(term: str) -> str:
@@ -108,9 +119,27 @@ def _section(cls, raw: dict | None):
     return cls(**kwargs)
 
 
+def _geos(raw_trends: dict) -> list[str]:
+    """Market codes, uppercased and deduped; "" is worldwide. Older configs had a single `geo`."""
+    values = raw_trends.get("geos")
+    if values is None:
+        values = [raw_trends.get("geo", "")]
+    out: list[str] = []
+    for v in values:
+        code = str(v).strip().upper()
+        code = "" if code in ("WW", "WORLDWIDE") else code
+        if code not in out:
+            out.append(code)
+    return out
+
+
 def config_from_dict(raw: dict) -> Config:
-    trends = _section(TrendsSettings, raw.get("trends"))
-    trends = TrendsSettings(**{**asdict(trends), "anchor": normalize_term(trends.anchor), "geo": trends.geo.upper()})
+    raw_trends = dict(raw.get("trends") or {})
+    geos = _geos(raw_trends)
+    raw_trends.pop("geos", None)
+    trends = _section(TrendsSettings, raw_trends)
+    trends = TrendsSettings(**{**asdict(trends), "anchor": normalize_term(trends.anchor),
+                               "geos": geos, "geo": trends.geo.upper()})
     cfg = Config(
         trends=trends,
         discovery=_section(DiscoverySettings, raw.get("discovery")),
@@ -132,8 +161,11 @@ def validate(cfg: Config) -> None:
         raise ValueError("The anchor keyword can't be empty.")
     if t.timeframe not in TIMEFRAMES:
         raise ValueError(f"Unsupported timeframe {t.timeframe!r}.")
-    if t.geo and not (len(t.geo) == 2 and t.geo.isalpha()):
-        raise ValueError("Region must be blank (worldwide) or a 2-letter country code like US or CA.")
+    if not 1 <= len(t.geos) <= MAX_MARKETS:
+        raise ValueError(f"Pick between 1 and {MAX_MARKETS} markets to track.")
+    for code in t.geos:
+        if code and not (len(code) == 2 and code.isalpha()):
+            raise ValueError(f"{code!r} isn't a 2-letter country code like US or CA.")
     if not 1 <= r.top_n <= 50:
         raise ValueError("Top list size must be between 1 and 50.")
     if r.volume_weight < 0 or r.momentum_weight < 0 or r.volume_weight + r.momentum_weight == 0:
