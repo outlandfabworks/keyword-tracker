@@ -29,7 +29,7 @@ rising_per_seed = 10      # rising related queries kept per seed
 top_per_seed = 3          # top related queries kept per seed (stable, high-volume neighbours)
 max_candidates = 60       # total pool size (pins + seeds + discovered); each 4 terms = 1 API call
 blocklist = []            # substrings; discovered terms containing any of these are dropped
-part_ideas = true         # collect Google autocomplete phrases per seed ("Part ideas" tab)
+part_ideas = true         # collect Google autocomplete phrases per seed ("Deep dive" tab)
 
 [ranking]
 top_n = 20

@@ -251,7 +251,7 @@ def _collect_ideas(
         try:
             found = suggester.complete(prefix)
         except SuggestRateLimited:
-            errors.append(f"autocomplete rate limited at {prefix!r}; part ideas incomplete")
+            errors.append(f"autocomplete rate limited at {prefix!r}; deep dive incomplete")
             break
         except Exception as e:
             log.warning("autocomplete(%r) failed: %s", prefix, e)

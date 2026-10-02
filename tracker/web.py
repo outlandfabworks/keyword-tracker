@@ -25,7 +25,7 @@ from .trends import MAX_TERMS_PER_REQUEST
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 PHASES = {"discover": "Finding related searches", "interest": "Measuring search interest",
-          "regions": "Looking up countries", "ideas": "Collecting part ideas"}
+          "regions": "Looking up countries", "ideas": "Deep dive: collecting searches"}
 PHASE_ORDER = ["discover", "interest", "regions", "ideas"]
 
 
@@ -414,7 +414,7 @@ def create_app(db_path: Path, defaults_path: Path = DEFAULT_CONFIG, start_backgr
                           "ignored": is_ignored(r["term"], r["source"], cfg.discovery.blocklist)})
         return jsonify(run={**dict(run), "market": market_code(run["geo"])}, items=items)
 
-    # --- part ideas (autocomplete) --------------------------------------------------
+    # --- deep dive (autocomplete) -----------------------------------------------------
 
     @app.get("/api/ideas")
     def ideas():
@@ -447,7 +447,7 @@ def create_app(db_path: Path, defaults_path: Path = DEFAULT_CONFIG, start_backgr
 
     @app.post("/api/ignore")
     def add_ignore():
-        """One-click 'Hide' from the Part ideas page: append a word to the ignore list."""
+        """One-click 'Hide' from the Deep dive page: append a word to the ignore list."""
         word = normalize_term(str((request.get_json(force=True) or {}).get("word", "")))
         if not word:
             raise ValueError("Nothing to ignore.")

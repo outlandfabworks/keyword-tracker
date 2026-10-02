@@ -1,4 +1,4 @@
-"""Group autocomplete phrases for a seed into part/topic buckets for the Part ideas tab."""
+"""Group autocomplete phrases for a seed into topic buckets for the Deep dive tab."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def group_ideas(
     def key_word(words: list[str]) -> str | None:
         for i, w in enumerate(words):
             if w not in QUALIFIERS and w not in context and not _NUMBERISH.match(w):
-                # a 1-2 letter word rarely names a part on its own: "go kart", "x pipe"
+                # a 1-2 letter word rarely names a thing on its own: "go kart", "x pipe"
                 return f"{w} {words[i + 1]}" if len(w) <= 2 and i + 1 < len(words) else w
         return words[-1] if words else None
 

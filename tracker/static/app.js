@@ -459,7 +459,7 @@ function render() {
   if (market) setMarket(market.toUpperCase());
   $$(".tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   if (state.status) renderTopbar();
-  const fn = { rankings: renderRankings, ideas: renderIdeas, explore: renderExplore, pinned: renderPinned,
+  const fn = { rankings: renderRankings, "deep-dive": renderIdeas, ideas: renderIdeas, explore: renderExplore, pinned: renderPinned,
     history: renderHistory, settings: renderSettings }[view] || renderRankings;
   fn().catch((e) => ($("#view").innerHTML = `<div class="callout err">Couldn't load this page: ${esc(e.message)}</div>`));
 }
@@ -586,10 +586,10 @@ async function renderRankings() {
         <p><b>Score:</b> each keyword is ranked against the others on both measures, then the two are blended
         (the balance is in <a href="#settings">Settings</a>). The top ${items.length} make the list, plus anything you've <b>pinned</b>.</p>
         <p><b>Similar keywords:</b> variants of the same search, like “1.9 alh tdi” and “alh”, share one row so the list
-        shows more different things${folded ? ` (${folded} folded in this list)` : ""}. Part names like “alh turbo” keep their own row.
+        shows more different things${folded ? ` (${folded} folded in this list)` : ""}. Specific things like “alh turbo” keep their own row.
         You can turn this off in <a href="#settings">Settings</a>.</p>
         <p><b>Where keywords come from:</b> your seed keywords, plus searches Google reports as rising or popular alongside them.
-        See every keyword checked in <a href="#explore">All keywords</a>, and the specific phrases people type in <a href="#ideas">Part ideas</a>.</p>
+        See every keyword checked in <a href="#explore">All keywords</a>, and the specific phrases people type in <a href="#deep-dive">Deep dive</a>.</p>
       </div>
     </details>`;
 
@@ -733,7 +733,7 @@ $("#drawer-backdrop").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 
 // ---------------------------------------------------------------------------
-// view: part ideas (Google autocomplete, grouped by part)
+// view: deep dive (Google autocomplete, grouped by topic)
 // ---------------------------------------------------------------------------
 const ideasUi = { q: "", newOnly: false, open: new Set() };
 const GOOGLE_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
@@ -743,12 +743,12 @@ async function renderIdeas() {
   const data = await api("/api/ideas" + qs(state.ideaSeed ? { seed: state.ideaSeed } : {}));
   const where = marketName(state.market);
   const head = `<div class="page-head"><div>
-      <h1>Part ideas${trackedMarkets().length > 1 ? " · " + esc(where) : ""}</h1>
-      <p class="muted">The specific things people type into Google for each seed, grouped by part. Good for spotting products to make.</p></div></div>`;
+      <h1>Deep dive${trackedMarkets().length > 1 ? " · " + esc(where) : ""}</h1>
+      <p class="muted">The specific things people type into Google for each seed, grouped by topic. Good for spotting what people want.</p></div></div>`;
   if (!data.run) {
     v.innerHTML = head + `<div class="card empty">${data.enabled
-      ? `<h2>No part ideas yet</h2><p class="muted">They're collected at the end of each refresh. Run one with <b>Refresh now</b>, or wait for the next automatic update.</p>`
-      : `<h2>Part ideas are turned off</h2><p class="muted">Turn them on in <a href="#settings">Settings</a>, then refresh.</p>`}</div>`;
+      ? `<h2>Nothing here yet</h2><p class="muted">They're collected at the end of each refresh. Run one with <b>Refresh now</b>, or wait for the next automatic update.</p>`
+      : `<h2>Deep dive is turned off</h2><p class="muted">Turn them on in <a href="#settings">Settings</a>, then refresh.</p>`}</div>`;
     return;
   }
   state.ideaSeed = data.seed;
@@ -772,7 +772,7 @@ async function renderIdeas() {
     const more = g.shown.length - list.length;
     return `<div class="card idea-card">
       <div class="idea-head"><h3>${esc(g.label)}</h3>
-        <span class="badge" data-tip="How many different searches Google suggested for this part">${g.shown.length} searches</span>
+        <span class="badge" data-tip="How many different searches Google suggested for this topic">${g.shown.length} searches</span>
         <button type="button" class="btn ghost small idea-hide" data-word="${esc(g.label)}"
           data-tip="Not relevant? Adds “${esc(g.label)}” to your ignore list, which hides it here and in the rankings. You can undo it.">Hide</button></div>
       <ul class="phrases">${list.map(phraseRow).join("")}</ul>
@@ -791,14 +791,14 @@ async function renderIdeas() {
       ${data.has_previous ? `<label class="toggle small"><input type="checkbox" id="idea-new" ${ideasUi.newOnly ? "checked" : ""}> New since last refresh only (${newCount})</label>` : ""}
       <span class="spacer"></span>
       <span class="muted small">${data.total} searches in ${data.groups.length} groups${data.hidden ? ` · ${data.hidden} hidden by your ignore list` : ""}
-        ${info("No search counts here: these phrases are too specific for Google Trends to measure. Google lists the most common ones first, so bigger groups mean more ways people look for that part.")}</span>
+        ${info("No search counts here: these phrases are too specific for Google Trends to measure. Google lists the most common ones first, so bigger groups mean more ways people look for that topic.")}</span>
     </div>
     ${groups.length || singles.length ? `<div class="idea-grid">${groups.map(card).join("")}</div>` : `<div class="card empty"><p class="muted">Nothing matches.</p></div>`}
     ${singles.length ? `<div class="card card-pad" style="margin-top:16px">
-      <h2>Other searches ${info("Phrases that didn't share a part name with any other phrase.")}</h2>
+      <h2>Other searches ${info("Phrases that didn't share a topic with any other phrase.")}</h2>
       <ul class="phrases cols">${singles.map(phraseRow).join("")}</ul></div>` : ""}
     <details class="card card-pad" style="margin-top:16px">
-      <summary>How part ideas work</summary>
+      <summary>How deep dive works</summary>
       <div class="stack muted" style="margin-top:10px">
         <p>At the end of each refresh, the tracker types each seed into Google's search box followed by every letter
         (“${esc(data.seed)} a”, “${esc(data.seed)} b”, …) and saves what Google suggests. That's what people actually search for.</p>
@@ -1029,12 +1029,12 @@ async function renderSettings() {
       <section class="card card-pad">
         <h2>What to track</h2>
         <div class="field" style="margin-top:14px">
-          <label>Seed keywords ${info("Your starting points. Each refresh asks Google which searches are related to these and rising, and adds them automatically. Seeds also drive the Part ideas page.")}</label>
+          <label>Seed keywords ${info("Your starting points. Each refresh asks Google which searches are related to these and rising, and adds them automatically. Seeds also drive the Deep dive page.")}</label>
           <span class="help">Type a keyword and press Enter. Click × to remove one.</span>
           <div class="chips" data-key="seeds"></div>
         </div>
         <div class="field">
-          <label>Ignore keywords containing ${info("Any discovered keyword or part idea containing one of these words is hidden right away and skipped in future refreshes. Your seeds and pinned keywords are never hidden.")}</label>
+          <label>Ignore keywords containing ${info("Any discovered keyword or deep-dive search containing one of these words is hidden right away and skipped in future refreshes. Your seeds and pinned keywords are never hidden.")}</label>
           <span class="help">For off-topic results, e.g. “rc”, “meaning”, “near me”.</span>
           <div class="chips" data-key="blocklist"></div>
         </div>
@@ -1051,7 +1051,7 @@ async function renderSettings() {
       </section>
 
       <section class="card card-pad">
-        <h2>Markets ${info(`Where the searches come from. Each market gets its own rankings, part ideas and breakdowns; switch between them with the picker at the top of the page. Each one is a separate refresh, so more markets take longer. Up to ${data.max_markets}.`)}</h2>
+        <h2>Markets ${info(`Where the searches come from. Each market gets its own rankings, deep dive and breakdowns; switch between them with the picker at the top of the page. Each one is a separate refresh, so more markets take longer. Up to ${data.max_markets}.`)}</h2>
         <p class="help" style="margin-top:6px">Worldwide breaks results down by country. A single country breaks them down by province or state.</p>
         <div class="row" id="markets" style="margin-top:12px"></div>
         <div class="row" style="margin-top:10px">
@@ -1075,15 +1075,15 @@ async function renderSettings() {
         </div>
         <div class="field">
           <label class="toggle"><input type="checkbox" id="group_similar" ${cfg.ranking.group_similar ? "checked" : ""}>
-            Group similar keywords ${info("Folds variants of the same search into one row, like “1.9 alh” and “1.9 alh tdi” under “alh”, so the list shows more different things. Part names like “alh turbo” always keep their own row.")}</label>
+            Group similar keywords ${info("Folds variants of the same search into one row, like “1.9 alh” and “1.9 alh tdi” under “alh”, so the list shows more different things. Specific things like “alh turbo” always keep their own row.")}</label>
         </div>
       </section>
 
       <section class="card card-pad">
-        <h2>Part ideas</h2>
+        <h2>Deep dive</h2>
         <div class="field" style="margin-top:14px">
           <label class="toggle"><input type="checkbox" id="part_ideas" ${cfg.discovery.part_ideas ? "checked" : ""}>
-            Collect part ideas from Google autocomplete ${info("At the end of each refresh, types each seed plus every letter into Google's search box (“alh a”, “alh b”…) and saves the suggestions. That's how the Part ideas page finds specific searches like “alh injector seals”. Adds about 1 minute per seed per market.")}</label>
+            Collect deep-dive searches from Google autocomplete ${info("At the end of each refresh, types each seed plus every letter into Google's search box (“alh a”, “alh b”…) and saves the suggestions. That's how the Deep dive page finds specific searches like “alh injector seals”. Adds about 1 minute per seed per market.")}</label>
         </div>
       </section>
 

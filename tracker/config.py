@@ -38,7 +38,7 @@ class DiscoverySettings:
     top_per_seed: int = 3
     max_candidates: int = 60
     blocklist: list[str] = field(default_factory=list)
-    part_ideas: bool = True   # collect Google autocomplete phrases for each seed (the "Part ideas" tab)
+    part_ideas: bool = True   # collect Google autocomplete phrases for each seed (the "Deep dive" tab)
 
 
 @dataclass(frozen=True)

@@ -299,7 +299,7 @@ tr.similar-row .kw { font-weight: 450; }
 .similar-mark { color: var(--muted); margin-right: 6px; }
 .label .info, h2 .info, th .info { margin-left: 0; }
 
-/* part ideas */
+/* deep dive */
 .idea-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; align-items: start; }
 .idea-card { padding: 14px 16px; }
 .idea-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }

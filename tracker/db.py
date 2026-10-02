@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS rankings (
     PRIMARY KEY (run_id, rank)
 );
 
--- Google autocomplete phrases per seed (the Part ideas tab).
+-- Google autocomplete phrases per seed (the Deep dive tab).
 CREATE TABLE IF NOT EXISTS suggestions (
     run_id    INTEGER NOT NULL REFERENCES runs(id),
     seed      TEXT NOT NULL,
@@ -299,7 +299,7 @@ def suggestion_seeds(conn: sqlite3.Connection, run_id: int) -> list[str]:
 
 
 def last_run_with_suggestions(conn: sqlite3.Connection, geo: str, before_id: int | None = None) -> sqlite3.Row | None:
-    """Latest run in a market that collected part ideas (optionally before a given run)."""
+    """Latest run in a market that collected deep-dive searches (optionally before a given run)."""
     return conn.execute(
         """SELECT r.* FROM runs r WHERE r.geo = ? AND r.id < ? AND r.status IN ('ok', 'partial', 'cancelled')
            AND EXISTS (SELECT 1 FROM suggestions s WHERE s.run_id = r.id) ORDER BY r.id DESC LIMIT 1""",
