@@ -110,12 +110,16 @@ class RunManager:
 
 
 class Scheduler(threading.Thread):
-    """Checks once a minute; starts a run if the latest weekly slot has passed with no run since."""
+    """Checks once a minute; starts a run if the latest weekly slot has passed with no run since.
 
-    def __init__(self, manager: RunManager, interval_s: int = 60):
+    With resume=True (the app was restarted mid-refresh), it first starts that refresh over.
+    """
+
+    def __init__(self, manager: RunManager, interval_s: int = 60, resume: bool = False):
         super().__init__(name="scheduler", daemon=True)
         self.manager = manager
         self.interval_s = interval_s
+        self.resume = resume
 
     def due(self, conn: sqlite3.Connection, now: datetime) -> bool:
         s = db.get_config(conn, self.manager.defaults_path).schedule
@@ -127,6 +131,8 @@ class Scheduler(threading.Thread):
 
     def run(self) -> None:
         time.sleep(15)  # let the server come up first
+        if self.resume and self.manager.start("resume"):
+            log.info("restarting the refresh that was interrupted by the restart")
         while True:
             try:
                 conn = db.connect(self.manager.db_path)
@@ -145,20 +151,52 @@ def rowdict(row: sqlite3.Row | None) -> dict | None:
     return dict(row) if row is not None else None
 
 
+def is_ignored(term: str, source: str | None, blocklist: list[str]) -> bool:
+    """Same rule as the refresh: only discovered keywords can be ignored, never seeds or pins."""
+    return source not in ("pin", "seed", "anchor") and any(b in term for b in blocklist)
+
+
+def display_ranking(conn: sqlite3.Connection, run_id: int, blocklist: list[str]) -> list[dict]:
+    """A run's stored ranking with currently-ignored keywords removed.
+
+    The next-best candidates from that run fill the gaps, so the list keeps its
+    length and editing the ignore list takes effect without waiting for a refresh.
+    Fill-ins have no country breakdown yet (regions_fetched=False).
+    """
+    stored = [dict(r) for r in db.ranking_for_run(conn, run_id)]
+    kept = [r for r in stored if r["pinned"] or not is_ignored(r["term"], r["source"], blocklist)]
+    for r in kept:
+        r["regions_fetched"] = True
+    if len(kept) < len(stored):
+        have = {r["term"] for r in kept}
+        for c in db.candidates_for_run(conn, run_id):  # best score first
+            if len(kept) >= len(stored):
+                break
+            if c["score"] is None or c["term"] in have or is_ignored(c["term"], c["source"], blocklist):
+                continue
+            kept.append({"term": c["term"], "score": c["score"], "pinned": 0, "volume": c["volume"],
+                         "momentum": c["momentum"], "source": c["source"], "regions_fetched": False})
+        kept.sort(key=lambda r: (r["score"] is None, -(r["score"] or 0.0)))
+    for i, r in enumerate(kept, 1):
+        r["rank"] = i
+    return kept
+
+
 def create_app(db_path: Path, defaults_path: Path = DEFAULT_CONFIG, start_background: bool = True) -> Flask:
     app = Flask(__name__, static_folder=None)
     password = os.environ.get("KWT_PASSWORD", "")
 
     conn = db.connect(db_path)
-    if n := db.mark_interrupted(conn):
-        log.warning("marked %d interrupted run(s) as failed", n)
+    interrupted = db.mark_interrupted(conn)
+    if interrupted:
+        log.warning("marked %d interrupted run(s) as failed; will start a fresh refresh", interrupted)
     db.get_config(conn, defaults_path)  # seed settings from config.toml on first boot
     conn.close()
 
     manager = RunManager(db_path, defaults_path)
     app.config["manager"] = manager
     if start_background:
-        Scheduler(manager).start()
+        Scheduler(manager, resume=bool(interrupted)).start()
 
     @app.before_request
     def auth():
@@ -259,9 +297,10 @@ def create_app(db_path: Path, defaults_path: Path = DEFAULT_CONFIG, start_backgr
         run = g.db.execute("SELECT * FROM runs WHERE id = ?", (rid,)).fetchone()
         if run is None:
             return jsonify(error="No such run."), 404
-        rows = db.ranking_for_run(g.db, rid)
+        blocklist = config().discovery.blocklist
+        rows = display_ranking(g.db, rid, blocklist)
         prev = db.previous_completed_run(g.db, rid)
-        prev_ranks = {r["term"]: r["rank"] for r in db.ranking_for_run(g.db, prev["id"])} if prev else {}
+        prev_ranks = {r["term"]: r["rank"] for r in display_ranking(g.db, prev["id"], blocklist)} if prev else {}
         series = db.series(g.db, rid, [r["term"] for r in rows])
         notes = {p["term"]: p["note"] for p in db.list_pins(g.db)}
         hide_small = config().regions.hide_small_countries
@@ -269,7 +308,7 @@ def create_app(db_path: Path, defaults_path: Path = DEFAULT_CONFIG, start_backgr
         for r in rows:
             regions = visible_regions(db.regions_for(g.db, rid, r["term"]), run["geo"], hide_small)
             items.append({
-                **dict(r),
+                **r,
                 "prev_rank": prev_ranks.get(r["term"]),
                 "series": [v for _, v in series[r["term"]]],
                 "top_regions": [dict(x) for x in regions[:3]],
@@ -286,14 +325,17 @@ def create_app(db_path: Path, defaults_path: Path = DEFAULT_CONFIG, start_backgr
             return jsonify(error="Missing keyword."), 400
         run = g.db.execute("SELECT * FROM runs WHERE id = ?", (rid,)).fetchone()
         cand = g.db.execute("SELECT * FROM candidates WHERE run_id = ? AND term = ?", (rid, term)).fetchone()
-        rank = g.db.execute("SELECT rank FROM rankings WHERE run_id = ? AND term = ?", (rid, term)).fetchone()
+        blocklist = config().discovery.blocklist
+        shown = {r["term"]: r for r in display_ranking(g.db, rid, blocklist)}
         series = db.series(g.db, rid, [term, run["anchor"]])
         pin = g.db.execute("SELECT * FROM pins WHERE term = ?", (term,)).fetchone()
         return jsonify(
             term=term,
             run=dict(run),
             candidate=rowdict(cand),
-            rank=rank["rank"] if rank else None,
+            rank=shown[term]["rank"] if term in shown else None,
+            regions_fetched=shown[term]["regions_fetched"] if term in shown else True,
+            ignored=bool(cand) and is_ignored(term, cand["source"], blocklist),
             dates=[d for d, _ in series[term]],
             values=[v for _, v in series[term]],
             anchor_values=[v for _, v in series[run["anchor"]]] if term != run["anchor"] else [],
@@ -313,7 +355,11 @@ def create_app(db_path: Path, defaults_path: Path = DEFAULT_CONFIG, start_backgr
             return jsonify(run=None, items=[])
         run = g.db.execute("SELECT * FROM runs WHERE id = ?", (rid,)).fetchone()
         pins = db.pinned_terms(g.db)
-        items = [{**dict(r), "pinned_now": r["term"] in pins} for r in db.candidates_for_run(g.db, rid)]
+        blocklist = config().discovery.blocklist
+        ranks = {r["term"]: r["rank"] for r in display_ranking(g.db, rid, blocklist)}
+        items = [{**dict(r), "rank": ranks.get(r["term"]), "pinned_now": r["term"] in pins,
+                  "ignored": is_ignored(r["term"], r["source"], blocklist)}
+                 for r in db.candidates_for_run(g.db, rid)]
         return jsonify(run=rowdict(run), items=items)
 
     # --- pins ---------------------------------------------------------------------
@@ -321,7 +367,8 @@ def create_app(db_path: Path, defaults_path: Path = DEFAULT_CONFIG, start_backgr
     @app.get("/api/pins")
     def pins():
         rid = run_id_arg()
-        ranks = {r["term"]: r["rank"] for r in db.ranking_for_run(g.db, rid)} if rid else {}
+        blocklist = config().discovery.blocklist
+        ranks = {r["term"]: r["rank"] for r in display_ranking(g.db, rid, blocklist)} if rid else {}
         return jsonify([{**dict(p), "rank": ranks.get(p["term"])} for p in db.list_pins(g.db)])
 
     @app.post("/api/pins")

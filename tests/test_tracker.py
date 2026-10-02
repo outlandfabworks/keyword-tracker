@@ -275,6 +275,26 @@ class ScheduleTests(unittest.TestCase):
         self.assertTrue(sched.due(conn, now + timedelta(days=8)))
 
 
+class ResumeTests(unittest.TestCase):
+    def test_restart_mid_run_resumes(self):
+        from unittest import mock
+        from tracker.web import Scheduler, create_app
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "t.db"
+        conn = db.connect(path)
+        db.save_config(conn, make_cfg())
+        db.start_run(conn, "anchor", "", "today 12-m")      # left 'running' by a "crash"
+        conn.close()
+        with mock.patch.object(Scheduler, "start") as start, mock.patch("tracker.web.Scheduler.__init__", return_value=None) as init:
+            create_app(path, Path("/nonexistent"))
+        self.assertTrue(init.call_args.kwargs["resume"])
+        start.assert_called_once()
+        conn = db.connect(path)
+        self.addCleanup(conn.close)
+        self.assertEqual(db.last_attempted_run(conn)["status"], "failed")
+
+
 class ApiTests(unittest.TestCase):
     def setUp(self):
         from tracker.web import create_app
@@ -325,6 +345,31 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(c.get("/").status_code, 200)
         self.assertEqual(c.get("/static/app.js").status_code, 200)
+
+    def test_ignore_list_applies_immediately(self):
+        c = self.client
+        before = [i["term"] for i in c.get("/api/ranking").get_json()["items"]]
+        self.assertIn("hot", before)
+        s = c.get("/api/settings").get_json()["config"]
+        s["discovery"]["blocklist"] = ["hot", "seed", "pin"]   # seeds and pins are exempt
+        c.put("/api/settings", json=s)
+
+        items = c.get("/api/ranking").get_json()["items"]
+        terms = [i["term"] for i in items]
+        self.assertNotIn("hot", terms)
+        self.assertEqual(len(items), len(before))               # gap filled from the pool
+        self.assertIn("pinme", terms)                            # pins are never hidden
+        self.assertEqual([i["rank"] for i in items], list(range(1, len(items) + 1)))
+        filled = [i for i in items if i["term"] not in before]
+        self.assertEqual(len(filled), 1)
+        self.assertFalse(filled[0]["regions_fetched"])
+        self.assertEqual(filled[0]["top_regions"], [])
+
+        cands = {i["term"]: i for i in c.get("/api/candidates").get_json()["items"]}
+        self.assertTrue(cands["hot"]["ignored"])
+        self.assertIsNone(cands["hot"]["rank"])
+        self.assertFalse(cands["seed1"]["ignored"])
+        self.assertTrue(c.get("/api/keyword?term=hot").get_json()["ignored"])
 
     def test_password(self):
         import base64, os

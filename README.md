@@ -13,9 +13,10 @@ A self-hosted Google Trends tracker for a niche. Give it a few seed keywords and
 - **Auto-discovery**: each refresh pulls Google's rising and popular related searches for your seeds, so new keywords show up without you adding them.
 - **Ranked top list**: a blend of popularity and momentum (last 4 weeks vs. the 12 before). A slider in Settings sets the balance.
 - **Pins**: keywords you pin always appear in the list, with an optional note.
+- **Ignore words**: hide off-topic keywords (e.g. "rc", "near me"). They disappear from the lists as soon as you save, the next-best keywords move up, and future refreshes skip them.
 - **Country breakdown** for the ranked keywords. The rest of the pool is skipped to save requests.
 - **History**: every weekly snapshot is kept, and you can open any past one.
-- **Weekly schedule** with catch-up: if the machine was off at refresh time, it runs when the machine comes back.
+- **Weekly schedule** with catch-up: if the machine was off at refresh time, it runs when the machine comes back. A refresh cut off by a restart or power loss starts over automatically.
 - **Light/dark mode** that follows your system, and works on phones.
 - **SQLite storage**: one file you can back up, query or export.
 

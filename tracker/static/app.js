@@ -292,7 +292,7 @@ function renderTopbar() {
   $("#progress-detail").textContent = run.detail ? `${run.done + 1} of ${run.total}: ${run.detail}` : "";
   const perReq = est.seconds / est.requests;
   const left = (total - done) * perReq;
-  $("#progress-eta").textContent = `${pct}% · about ${fmtDuration(left)} left · started ${relTime(run.started_at)}. It's slow on purpose so Google doesn't block it. You can close this page.`;
+  $("#progress-eta").textContent = `${pct}% · about ${fmtDuration(left)} left · started ${relTime(run.started_at)}. It's slow on purpose so Google doesn't block it. It runs on the server, so you can close this tab.`;
   $("#cancel-btn").disabled = !!run.cancelling;
 }
 
@@ -445,7 +445,9 @@ async function renderRankings() {
               <td class="right num">${fmtVol(r.volume)}</td>
               <td class="right num">${momHtml(r.momentum)}</td>
               <td>${meterHtml(r.score)}</td>
-              <td class="hide-sm regions-mini">${r.top_regions.map((x) => esc(x.name)).join(", ") || '<span class="faint" title="Not enough searches for a reliable breakdown">too few searches</span>'}</td>
+              <td class="hide-sm regions-mini">${r.top_regions.map((x) => esc(x.name)).join(", ") || (r.regions_fetched
+                ? '<span class="faint" title="Not enough searches for a reliable breakdown">too few searches</span>'
+                : '<span class="faint" title="Moved up after you ignored a keyword. Countries are looked up on the next refresh.">next refresh</span>')}</td>
               <td class="right">${pinBtn(r.term, r.pinned_now)}</td>
             </tr>`).join("")}
         </tbody>
@@ -515,6 +517,7 @@ async function openKeyword(term, animate = true) {
           ${k.rank ? `<span class="badge">#${k.rank} in the list</span>` : `<span class="badge">Not in the top list</span>`}
           ${c.source ? `<span class="badge" title="${esc(SOURCE_HELP[c.source])}">${esc(SOURCE_LABEL[c.source])}</span>` : ""}
           ${pinned ? `<span class="badge pin">Pinned</span>` : ""}
+          ${k.ignored ? `<span class="badge" title="Matches a word in your ignore list (Settings)">Ignored</span>` : ""}
         </div>
       </div>
       <button class="icon-btn" id="drawer-close" aria-label="Close" style="font-size:20px">✕</button>
@@ -545,7 +548,7 @@ async function openKeyword(term, animate = true) {
 
     ${k.rank || k.regions.length ? `<div class="section">
       <h2>Where people search for it</h2>
-      ${hbars(regionsShown, `100 = the ${k.region_kind} where this keyword takes the biggest share of searches. Showing the top ${regionsShown.length} of ${k.regions.length}.${k.small_hidden ? " Small countries are hidden (Settings → Advanced)." : ""}`)}
+      ${!k.regions_fetched ? '<p class="muted">This keyword moved into the list after you ignored another one. Its countries are looked up on the next refresh.</p>' : hbars(regionsShown, `100 = the ${k.region_kind} where this keyword takes the biggest share of searches. Showing the top ${regionsShown.length} of ${k.regions.length}.${k.small_hidden ? " Small countries are hidden (Settings → Advanced)." : ""}`)}
     </div>` : ""}
 
     <div class="section">
@@ -614,7 +617,7 @@ async function renderExplore() {
   const v = $("#view");
   if (!data.run) { v.innerHTML = emptyState(); return; }
   const ex = state.explore;
-  const filters = { all: "All", rising: "Rising", top: "Popular related", seed: "Seeds", pin: "Pinned", ranked: "In top list", problem: "Problems" };
+  const filters = { all: "All", rising: "Rising", top: "Popular related", seed: "Seeds", pin: "Pinned", ranked: "In top list", ignored: "Ignored", problem: "Problems" };
   const counts = {};
   for (const f of Object.keys(filters)) counts[f] = data.items.filter((i) => matchFilter(i, f)).length;
 
@@ -651,7 +654,8 @@ async function renderExplore() {
     $("#ex-body").innerHTML = rows.length ? rows.map((r) => `
       <tr class="clickable" tabindex="0" data-term="${esc(r.term)}">
         <td class="kw-cell"><span class="kw">${esc(r.term)}</span>
-          ${r.error ? `<span class="badge" style="margin-left:6px" title="${esc(r.error)}">⚠ no data</span>` : ""}</td>
+          ${r.error ? `<span class="badge" style="margin-left:6px" title="${esc(r.error)}">⚠ no data</span>` : ""}
+          ${r.ignored ? `<span class="badge" style="margin-left:6px" title="Matches a word in your ignore list (Settings)">Ignored</span>` : ""}</td>
         <td><span class="badge" title="${esc(SOURCE_HELP[r.source])}">${esc(SOURCE_LABEL[r.source] || r.source)}</span></td>
         <td class="right num">${fmtVol(r.volume)}</td>
         <td class="right num">${momHtml(r.momentum)}</td>
@@ -679,6 +683,7 @@ function matchFilter(i, f) {
   if (f === "all") return true;
   if (f === "ranked") return i.rank != null;
   if (f === "problem") return !!i.error;
+  if (f === "ignored") return !!i.ignored;
   if (f === "pin") return i.pinned_now || i.source === "pin";
   return i.source === f;
 }
@@ -758,7 +763,7 @@ async function renderSettings() {
 
   v.innerHTML = `
     <div class="page-head"><div><h1>Settings</h1>
-      <p class="muted">Changes apply from the next refresh. Nothing here deletes past data.</p></div></div>
+      <p class="muted">Ignored words apply as soon as you save; other changes apply from the next refresh. Nothing here deletes past data.</p></div></div>
     <form id="settings" class="settings" autocomplete="off">
       <section class="card card-pad">
         <h2>What to track</h2>
@@ -769,7 +774,7 @@ async function renderSettings() {
         </div>
         <div class="field">
           <label>Ignore keywords containing</label>
-          <span class="help">Discovered keywords that contain any of these words are skipped (e.g. “meaning”, “near me”, a brand you don't care about).</span>
+          <span class="help">Discovered keywords that contain any of these words are hidden from the lists as soon as you save, and skipped in future refreshes (e.g. “meaning”, “near me”, a brand you don't care about). Seeds and pinned keywords are never hidden.</span>
           <div class="chips" data-key="blocklist"></div>
         </div>
         <div class="grid-2" style="margin-top:18px">
@@ -900,7 +905,7 @@ async function renderSettings() {
       await api("/api/settings", { method: "PUT", body: collect() });
       state.settingsDirty = false;
       $("#dirty").textContent = "";
-      toast("Settings saved. They'll be used from the next refresh.");
+      toast("Settings saved. Ignored words apply right away; everything else from the next refresh.");
       pollStatus();
     } catch (err) { toast(err.message, true); }
   });

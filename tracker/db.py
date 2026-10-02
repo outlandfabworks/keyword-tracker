@@ -175,7 +175,7 @@ def mark_interrupted(conn: sqlite3.Connection) -> int:
     with conn:
         cur = conn.execute(
             "UPDATE runs SET status = 'failed', finished_at = ?, "
-            "error = COALESCE(error || char(10), '') || 'interrupted (app restarted mid-run)' "
+            "error = COALESCE(error || char(10), '') || 'interrupted (app restarted mid-run); a new refresh starts automatically' "
             "WHERE status = 'running'",
             (now(),),
         )
