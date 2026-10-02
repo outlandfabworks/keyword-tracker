@@ -1,0 +1,14 @@
+services:
+  keyword-tracker:
+    # Builds from this folder. To use the pre-built image instead, replace `build: .` with:
+    #   image: ghcr.io/outlandfabworks/keyword-tracker:latest
+    build: .
+    container_name: keyword-tracker
+    restart: unless-stopped
+    ports:
+      - "${KWT_PORT:-8090}:8090"
+    environment:
+      TZ: "${TZ:-UTC}"
+      KWT_PASSWORD: "${KWT_PASSWORD:-}"
+    volumes:
+      - ./data:/data

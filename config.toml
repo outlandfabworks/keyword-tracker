@@ -1,0 +1,54 @@
+# First-boot defaults only. Once the app has started, settings live in the database
+# and are edited from the web UI (Settings tab); changes here are ignored after that.
+
+[trends]
+geo = ""                  # "" = worldwide (needed for a per-country breakdown); "US", "CA", ... to scope
+timeframe = "today 12-m"  # weekly datapoints over the last year
+hl = "en-US"
+# Time zone comes from the container (TZ in .env); the weekly schedule uses it.
+
+# Google Trends only returns 0-100 values *relative to the other terms in the same request*,
+# and at most 5 terms per request. Every batch includes this anchor term so results from
+# different batches can be put on one scale ("volume" = interest relative to the anchor).
+# Pick something mid-sized for your niche: if a candidate is >100x the anchor, the anchor
+# rounds to 0 and that batch can't be scaled.
+anchor = "overlanding"
+
+[discovery]
+seeds = [
+  "overlanding",
+  "off road",
+  "rock crawler",
+  "roof top tent",
+  "4x4 bumper",
+  "tube bender",
+  "metal fabrication",
+  "tig welding",
+]
+rising_per_seed = 10      # rising related queries kept per seed
+top_per_seed = 3          # top related queries kept per seed (stable, high-volume neighbours)
+max_candidates = 60       # total pool size (pins + seeds + discovered); each 4 terms = 1 API call
+blocklist = []            # substrings; discovered terms containing any of these are dropped
+
+[ranking]
+top_n = 20
+volume_weight = 0.5
+momentum_weight = 0.5
+recent_weeks = 4          # momentum = recent window vs. the baseline window before it
+baseline_weeks = 12
+momentum_floor = 0.05     # added to both windows (in anchor units) so tiny terms don't swing wildly
+
+[regions]
+hide_small_countries = true  # hide countries/territories under ~1M people, which top lists on a handful of searches
+                             # (breakdown is by country when worldwide, by province/state when geo is set)
+
+[rate_limit]
+min_delay_s = 8           # randomised pause between requests
+max_delay_s = 15
+max_retries = 5
+backoff_base_s = 60       # 60s, 120s, 240s... on HTTP 429
+
+[schedule]
+enabled = true
+weekday = 0               # 0 = Monday ... 6 = Sunday
+hour = 4                  # local time; a missed slot (box off) runs as soon as it's back up

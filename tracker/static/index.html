@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyword Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232a78d6'/><path d='M6 22l6-7 5 4 9-11' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--accent)"/><path d="M6 22l6-7 5 4 9-11" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Keyword Tracker</span>
+  </div>
+  <nav class="tabs" aria-label="Sections">
+    <a href="#rankings" data-view="rankings">Rankings</a>
+    <a href="#explore" data-view="explore">All keywords</a>
+    <a href="#pinned" data-view="pinned">Pinned</a>
+    <a href="#history" data-view="history">History</a>
+    <a href="#settings" data-view="settings">Settings</a>
+  </nav>
+  <div class="topbar-right">
+    <div id="freshness" class="freshness muted small"></div>
+    <button id="run-btn" class="btn primary">Refresh now</button>
+  </div>
+</header>
+
+<section id="progress" class="progress" hidden>
+  <div class="progress-inner">
+    <div class="progress-text">
+      <strong id="progress-title">Refreshing data…</strong>
+      <span id="progress-detail" class="muted"></span>
+    </div>
+    <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><div id="progress-fill"></div></div>
+    <div class="progress-meta">
+      <span id="progress-eta" class="muted small"></span>
+      <button id="cancel-btn" class="btn ghost small">Cancel</button>
+    </div>
+  </div>
+</section>
+
+<main id="view" class="container"></main>
+
+<div id="drawer-backdrop" class="backdrop" hidden></div>
+<aside id="drawer" class="drawer" aria-hidden="true" tabindex="-1">
+  <div id="drawer-body"></div>
+</aside>
+
+<div id="tooltip" class="tooltip" hidden></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
